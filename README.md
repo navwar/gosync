@@ -43,6 +43,32 @@ Flags:
       --timeout duration                    maximum duration for copying an individual file before aborting
 ```
 
+## Examples
+
+The below command synchronizes the directory at source to destination.
+
+```shell
+aws-vault exec AWS_PROFILE -- gosync sync source destination
+```
+
+Below is a command to synchronize two s3 buckets, which uses the [S3 CopyObject API action](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html) when the file size is less than 5GB.  When using the CopyObject action, the file does not have to be downloaded locally to be transferred, so copying is much faster. 
+
+```shell
+aws-vault exec AWS_PROFILE -- gosync sync s3://SOURE_BUCKET s3://DESTINATION_BUCKET
+```
+
+Below is a command to download data from a source AWS S3 bucket to a local destination directory.
+
+```shell
+aws-vault exec AWS_PROFILE -- gosync sync s3://SOURE_BUCKET local_destination
+```
+
+Below is a command to download data from a local source directory to a destination AWS S3 Bucket.
+
+```shell
+aws-vault exec AWS_PROFILE -- gosync sync local_source s3://DESTINATION_BUCKET 
+```
+
 ## Building
 
 **gosync** is written in pure Go, so the only dependency needed to compile the server is [Go](https://golang.org/).  Go can be downloaded from <https://golang.org/dl/>.

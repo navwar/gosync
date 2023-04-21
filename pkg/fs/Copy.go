@@ -15,33 +15,33 @@ import (
 )
 
 // Split splits the path using the path separator for the local operating system
-func Copy(ctx context.Context, sourceName string, sourceFileSystem FileSystem, destinationName string, destinationFileSystem FileSystem, parents bool, logger Logger) error {
-	if logger != nil {
-		logger.Log("Copying file", map[string]interface{}{
-			"src": sourceName,
-			"dst": destinationName,
+func Copy(ctx context.Context, input *CopyInput) error {
+	if input.Logger != nil {
+		input.Logger.Log("Copying file", map[string]interface{}{
+			"src": input.SourceName,
+			"dst": input.DestinationName,
 		})
 	}
 
 	// open source file
-	sourceFile, err := sourceFileSystem.Open(ctx, sourceName)
+	sourceFile, err := input.SourceFileSystem.Open(ctx, input.SourceName)
 	if err != nil {
-		return fmt.Errorf("error opening source file at %q: %w", sourceName, err)
+		return fmt.Errorf("error opening source file at %q: %w", input.SourceName, err)
 	}
 
 	// check parent directory and create it if allowed
-	parent := destinationFileSystem.Dir(destinationName)
-	if _, err := destinationFileSystem.Stat(ctx, parent); err != nil {
-		if destinationFileSystem.IsNotExist(err) {
-			if !parents {
+	parent := input.DestinationFileSystem.Dir(input.DestinationName)
+	if _, err := input.DestinationFileSystem.Stat(ctx, parent); err != nil {
+		if input.DestinationFileSystem.IsNotExist(err) {
+			if !input.Parents {
 				return fmt.Errorf(
 					"parent directory for destination %q does not exist and parents parameter is false",
-					destinationName,
+					input.DestinationName,
 				)
 			}
-			err := destinationFileSystem.MkdirAll(ctx, parent, 0755)
+			err := input.DestinationFileSystem.MkdirAll(ctx, parent, 0755)
 			if err != nil {
-				return fmt.Errorf("error creating parent directories for %q", destinationFileSystem)
+				return fmt.Errorf("error creating parent directories for %q", input.DestinationName)
 			}
 		} else {
 			return fmt.Errorf("error stating destination parent %q: %w", parent, err)
@@ -49,10 +49,10 @@ func Copy(ctx context.Context, sourceName string, sourceFileSystem FileSystem, d
 	}
 
 	// open destination file
-	destinationFile, err := destinationFileSystem.OpenFile(ctx, destinationName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+	destinationFile, err := input.DestinationFileSystem.OpenFile(ctx, input.DestinationName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		_ = sourceFile.Close() // silently close source file
-		return fmt.Errorf("error creating destination file at %q: %w", sourceName, err)
+		return fmt.Errorf("error creating destination file at %q: %w", input.SourceName, err)
 	}
 
 	// copy bytes from source to destination
@@ -60,7 +60,7 @@ func Copy(ctx context.Context, sourceName string, sourceFileSystem FileSystem, d
 	if err != nil {
 		_ = sourceFile.Close()      // silently close source file
 		_ = destinationFile.Close() // silently close destination file
-		return fmt.Errorf("error copying from %q to %q: %w", sourceName, destinationName, err)
+		return fmt.Errorf("error copying from %q to %q: %w", input.SourceName, input.DestinationName, err)
 	}
 
 	err = sourceFile.Close()
@@ -74,10 +74,10 @@ func Copy(ctx context.Context, sourceName string, sourceFileSystem FileSystem, d
 		return fmt.Errorf("error closing destination file after copying: %w", err)
 	}
 
-	if logger != nil {
-		logger.Log("Done copying file", map[string]interface{}{
-			"src":     sourceName,
-			"dst":     destinationName,
+	if input.Logger != nil {
+		input.Logger.Log("Done copying file", map[string]interface{}{
+			"src":     input.SourceName,
+			"dst":     input.DestinationName,
 			"written": written,
 		})
 	}

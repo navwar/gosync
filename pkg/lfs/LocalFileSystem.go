@@ -25,55 +25,56 @@ import (
 type LocalFileSystem struct {
 	fs   afero.Fs
 	iofs afero.IOFS
+	root string
 }
 
-func (lfs *LocalFileSystem) Copy(ctx context.Context, source string, destination string, parents bool, logger fs.Logger) error {
-	if logger != nil {
-		logger.Log("Copying file", map[string]interface{}{
-			"src": source,
-			"dst": destination,
+func (lfs *LocalFileSystem) Copy(ctx context.Context, input *fs.CopyInput) error {
+	if input.Logger != nil {
+		input.Logger.Log("Copying file", map[string]interface{}{
+			"src": input.SourceName,
+			"dst": input.DestinationName,
 		})
 	}
 
-	parent := filepath.Dir(destination)
+	parent := filepath.Dir(input.DestinationName)
 	if _, err := lfs.fs.Stat(parent); err != nil {
 		if lfs.IsNotExist(err) {
-			if !parents {
+			if !input.Parents {
 				return fmt.Errorf(
 					"parent directory for destination %q does not exist and parents parameter is false",
-					destination,
+					input.DestinationName,
 				)
 			}
 			err := lfs.fs.MkdirAll(parent, 0755)
 			if err != nil {
-				return fmt.Errorf("error creating parent directories for %q", destination)
+				return fmt.Errorf("error creating parent directories for %q", input.DestinationName)
 			}
 		} else {
 			return fmt.Errorf("error stating destination parent %q: %w", parent, err)
 		}
 	}
 
-	sourceFileInfo, err := lfs.fs.Stat(source)
+	sourceFileInfo, err := lfs.fs.Stat(input.SourceName)
 	if err != nil {
-		return fmt.Errorf("error stating source file at %q: %w", source, err)
+		return fmt.Errorf("error stating source file at %q: %w", input.SourceName, err)
 	}
 
-	sourceFile, err := lfs.fs.Open(source)
+	sourceFile, err := lfs.fs.Open(input.SourceName)
 	if err != nil {
-		return fmt.Errorf("error opening source file at %q: %w", source, err)
+		return fmt.Errorf("error opening source file at %q: %w", input.SourceName, err)
 	}
 
-	destinationFile, err := lfs.fs.OpenFile(destination, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+	destinationFile, err := lfs.fs.OpenFile(input.DestinationName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		_ = sourceFile.Close() // silently close source file
-		return fmt.Errorf("error creating destination file at %q: %w", source, err)
+		return fmt.Errorf("error creating destination file at %q: %w", input.DestinationName, err)
 	}
 
 	written, err := io.Copy(destinationFile, sourceFile)
 	if err != nil {
 		_ = sourceFile.Close()      // silently close source file
 		_ = destinationFile.Close() // silently close destination file
-		return fmt.Errorf("error copying from %q to %q: %w", source, destination, err)
+		return fmt.Errorf("error copying from %q to %q: %w", input.SourceName, input.DestinationName, err)
 	}
 
 	err = sourceFile.Close()
@@ -88,15 +89,15 @@ func (lfs *LocalFileSystem) Copy(ctx context.Context, source string, destination
 	}
 
 	// Preserve Modification time
-	err = lfs.fs.Chtimes(destination, time.Now(), sourceFileInfo.ModTime())
+	err = lfs.fs.Chtimes(input.DestinationName, time.Now(), sourceFileInfo.ModTime())
 	if err != nil {
-		return fmt.Errorf("error changing timestamps for destination after copying: %w", err)
+		return fmt.Errorf("error changing timestamps for destination %q after copying: %w", input.DestinationName, err)
 	}
 
-	if logger != nil {
-		logger.Log("Done copying file", map[string]interface{}{
-			"src":     source,
-			"dst":     destination,
+	if input.Logger != nil {
+		input.Logger.Log("Done copying file", map[string]interface{}{
+			"src":     input.SourceName,
+			"dst":     input.DestinationName,
 			"written": written,
 		})
 	}
@@ -150,6 +151,10 @@ func (lfs *LocalFileSystem) ReadDir(ctx context.Context, name string) ([]fs.Dire
 	return directoryEntries, nil
 }
 
+func (lfs *LocalFileSystem) Root() string {
+	return lfs.root
+}
+
 func (lfs *LocalFileSystem) Size(ctx context.Context, name string) (int64, error) {
 	fi, err := lfs.fs.Stat(name)
 	if err != nil {
@@ -166,10 +171,18 @@ func (lfs *LocalFileSystem) Stat(ctx context.Context, name string) (fs.FileInfo,
 	return NewLocalFileInfo(fi.Name(), fi.ModTime(), fi.IsDir(), fi.Size()), nil
 }
 
-func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, source string, destinationDirectory string, checkTimestamps bool, limit int, logger fs.Logger) (int, error) {
-	sourceDirectoryEntries, err := lfs.ReadDir(ctx, source)
+func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirectoryInput) (int, error) {
+	sourceDirectoryEntries, err := lfs.ReadDir(ctx, input.SourceDirectory)
 	if err != nil {
-		return 0, fmt.Errorf("error reading source directory %q: %w", source, err)
+		return 0, fmt.Errorf("error reading source directory %q: %w", input.SourceDirectory, err)
+	}
+
+	if input.Logger != nil {
+		input.Logger.Log("Synchronizing Directory", map[string]interface{}{
+			"src":   input.SourceDirectory,
+			"dst":   input.DestinationDirectory,
+			"files": len(sourceDirectoryEntries),
+		})
 	}
 
 	// wait group
@@ -180,15 +193,22 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, source string, de
 
 	for _, sourceDirectoryEntry := range sourceDirectoryEntries {
 		sourceDirectoryEntry := sourceDirectoryEntry
-		sourceName := filepath.Join(source, sourceDirectoryEntry.Name())
-		destinationName := filepath.Join(destinationDirectory, sourceDirectoryEntry.Name())
+		sourceName := filepath.Join(input.SourceDirectory, sourceDirectoryEntry.Name())
+		destinationName := filepath.Join(input.DestinationDirectory, sourceDirectoryEntry.Name())
 		if sourceDirectoryEntry.IsDir() {
 			// synchronize directory and wait until all files are finished copying
 			directoryLimit := -1
-			if limit != -1 {
-				directoryLimit = limit - count
+			if input.Limit != -1 {
+				directoryLimit = input.Limit - count
 			}
-			c, err := lfs.SyncDirectory(ctx, sourceName, destinationName, checkTimestamps, directoryLimit, logger)
+			c, err := lfs.SyncDirectory(ctx, &fs.SyncDirectoryInput{
+				SourceDirectory:      sourceName,
+				DestinationDirectory: destinationName,
+				CheckTimestamps:      input.CheckTimestamps,
+				Limit:                directoryLimit,
+				Logger:               input.Logger,
+				MaxThreads:           input.MaxThreads,
+			})
 			if err != nil {
 				return 0, err
 			}
@@ -208,20 +228,25 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, source string, de
 					if sourceDirectoryEntry.Size() != destinationFileInfo.Size() {
 						copyFile = true
 					}
-					if checkTimestamps {
+					if input.CheckTimestamps {
 						if sourceDirectoryEntry.ModTime() != destinationFileInfo.ModTime() {
 							copyFile = true
 						}
 					}
 				}
 				if copyFile {
-					err := lfs.Copy(context.Background(), sourceName, destinationName, true, logger)
+					err := lfs.Copy(context.Background(), &fs.CopyInput{
+						SourceName:      sourceName,
+						DestinationName: destinationName,
+						Parents:         true,
+						Logger:          input.Logger,
+					})
 					if err != nil {
 						return fmt.Errorf("error copying %q to %q: %w", sourceName, destinationName, err)
 					}
 				} else {
-					if logger != nil {
-						logger.Log("Skipping file", map[string]interface{}{
+					if input.Logger != nil {
+						input.Logger.Log("Skipping file", map[string]interface{}{
 							"src": sourceName,
 						})
 					}
@@ -230,40 +255,48 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, source string, de
 			})
 		}
 		// break if count is greater than or at the limit
-		if limit != -1 && count >= limit {
+		if input.Limit != -1 && count >= input.Limit {
 			break
 		}
 	}
 
 	// wait for all files in directory to copy before returning
 	if err := wg.Wait(); err != nil {
-		return 0, fmt.Errorf("error synchronizing directory %q to %q: %w", source, destinationDirectory, err)
+		return 0, fmt.Errorf("error synchronizing directory %q to %q: %w", input.SourceDirectory, input.DestinationDirectory, err)
 	}
 
 	return count, nil
 }
 
-func (lfs *LocalFileSystem) Sync(ctx context.Context, source string, destination string, parents bool, checkTimestamps bool, limit int, logger fs.Logger) (int, error) {
+// func (lfs *LocalFileSystem) Sync(ctx context.Context, source string, destination string, parents bool, checkTimestamps bool, limit int, logger fs.Logger) (int, error) {
+func (lfs *LocalFileSystem) Sync(ctx context.Context, input *fs.SyncInput) (int, error) {
 
-	sourceFileInfo, err := lfs.Stat(ctx, source)
+	sourceFileInfo, err := lfs.Stat(ctx, input.Source)
 	if err != nil {
 		if lfs.IsNotExist(err) {
-			return 0, fmt.Errorf("source does not exist %q: %w", source, err)
+			return 0, fmt.Errorf("source does not exist %q: %w", input.Source, err)
 		}
 	}
 
 	// if source is a directory
 	if sourceFileInfo.IsDir() {
-		if _, err := lfs.Stat(ctx, destination); err != nil {
+		if _, err := lfs.Stat(ctx, input.Destination); err != nil {
 			if lfs.IsNotExist(err) {
-				if !parents {
-					return 0, fmt.Errorf("destination directory does not exist and parents is false: %q", destination)
+				if !input.Parents {
+					return 0, fmt.Errorf("destination directory does not exist and parents is false: %q", input.Destination)
 				}
 			}
 		}
-		count, err := lfs.SyncDirectory(ctx, source, destination, checkTimestamps, limit, logger)
+		count, err := lfs.SyncDirectory(ctx, &fs.SyncDirectoryInput{
+			SourceDirectory:      input.Source,
+			DestinationDirectory: input.Destination,
+			CheckTimestamps:      input.CheckTimestamps,
+			Limit:                input.Limit,
+			Logger:               input.Logger,
+			MaxThreads:           input.MaxThreads,
+		})
 		if err != nil {
-			return 0, fmt.Errorf("error syncing source directory %q to destination directory %q: %w", source, destination, err)
+			return 0, fmt.Errorf("error syncing source directory %q to destination directory %q: %w", input.Source, input.Destination, err)
 		}
 		return count, nil
 	}
@@ -271,18 +304,18 @@ func (lfs *LocalFileSystem) Sync(ctx context.Context, source string, destination
 	// if source is a file
 	copyFile := false
 
-	destinationFileInfo, err := lfs.Stat(ctx, destination)
+	destinationFileInfo, err := lfs.Stat(ctx, input.Destination)
 	if err != nil {
 		if lfs.IsNotExist(err) {
 			copyFile = true
 		} else {
-			return 0, fmt.Errorf("error stating destination %q: %w", destination, err)
+			return 0, fmt.Errorf("error stating destination %q: %w", input.Destination, err)
 		}
 	} else {
 		if sourceFileInfo.Size() != destinationFileInfo.Size() {
 			copyFile = true
 		}
-		if checkTimestamps {
+		if input.CheckTimestamps {
 			if sourceFileInfo.ModTime() != destinationFileInfo.ModTime() {
 				copyFile = true
 			}
@@ -290,9 +323,14 @@ func (lfs *LocalFileSystem) Sync(ctx context.Context, source string, destination
 	}
 
 	if copyFile {
-		err = lfs.Copy(ctx, source, destination, parents, logger)
+		err = lfs.Copy(ctx, &fs.CopyInput{
+			SourceName:      input.Source,
+			DestinationName: input.Destination,
+			Parents:         input.Parents,
+			Logger:          input.Logger,
+		})
 		if err != nil {
-			return 0, fmt.Errorf("error copying %q to %q: %w", source, destination, err)
+			return 0, fmt.Errorf("error copying %q to %q: %w", input.Source, input.Destination, err)
 		}
 		return 1, nil
 	}
@@ -305,6 +343,7 @@ func NewLocalFileSystem(rootPath string) *LocalFileSystem {
 	return &LocalFileSystem{
 		fs:   lfs,
 		iofs: afero.NewIOFS(lfs),
+		root: rootPath,
 	}
 }
 
@@ -313,5 +352,6 @@ func NewReadOnlyLocalSystem(rootPath string) *LocalFileSystem {
 	return &LocalFileSystem{
 		fs:   lfs,
 		iofs: afero.NewIOFS(lfs),
+		root: rootPath,
 	}
 }

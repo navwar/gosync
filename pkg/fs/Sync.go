@@ -12,27 +12,43 @@ import (
 	"fmt"
 )
 
-func Sync(ctx context.Context, source string, sourceFileSystem FileSystem, destination string, destinationFileSystem FileSystem, parents bool, checkTimestamps bool, limit int, logger Logger) (int, error) {
+func Sync(ctx context.Context, input *SyncInput) (int, error) {
 
-	sourceFileInfo, err := sourceFileSystem.Stat(ctx, source)
+	sourceFileInfo, err := input.SourceFileSystem.Stat(ctx, input.Source)
 	if err != nil {
-		if sourceFileSystem.IsNotExist(err) {
-			return 0, fmt.Errorf("source does not exist %q: %w", source, err)
+		if input.SourceFileSystem.IsNotExist(err) {
+			return 0, fmt.Errorf("source does not exist %q: %w", input.Source, err)
 		}
 	}
 
 	// if source is a directory
 	if sourceFileInfo.IsDir() {
-		if _, err := destinationFileSystem.Stat(ctx, destination); err != nil {
-			if destinationFileSystem.IsNotExist(err) {
-				if !parents {
-					return 0, fmt.Errorf("destination directory does not exist and parents is false: %q", destination)
+		if _, err := input.DestinationFileSystem.Stat(ctx, input.Destination); err != nil {
+			if input.DestinationFileSystem.IsNotExist(err) {
+				if !input.Parents {
+					return 0, fmt.Errorf("destination directory does not exist and parents is false: %q", input.Destination)
 				}
 			}
 		}
-		count, err := SyncDirectory(ctx, source, sourceFileSystem, destination, destinationFileSystem, checkTimestamps, limit, logger)
+		count, err := SyncDirectory(ctx, &SyncDirectoryInput{
+			SourceDirectory:       input.Source,
+			SourceFileSystem:      input.SourceFileSystem,
+			DestinationDirectory:  input.Destination,
+			DestinationFileSystem: input.DestinationFileSystem,
+			CheckTimestamps:       input.CheckTimestamps,
+			Limit:                 input.Limit,
+			Logger:                input.Logger,
+			MaxThreads:            input.MaxThreads,
+		})
 		if err != nil {
-			return 0, fmt.Errorf("error syncing source directory %q to destination directory %q: %w", source, destination, err)
+			return 0, fmt.Errorf(
+				"error syncing source directory %q (base %q) to destination directory %q (base %q): %w",
+				input.Source,
+				input.SourceFileSystem.Root(),
+				input.Destination,
+				input.DestinationFileSystem.Root(),
+				err,
+			)
 		}
 		return count, nil
 	}
@@ -40,18 +56,18 @@ func Sync(ctx context.Context, source string, sourceFileSystem FileSystem, desti
 	// if source is a file
 	copyFile := false
 
-	destinationFileInfo, err := destinationFileSystem.Stat(ctx, destination)
+	destinationFileInfo, err := input.DestinationFileSystem.Stat(ctx, input.Destination)
 	if err != nil {
-		if destinationFileSystem.IsNotExist(err) {
+		if input.DestinationFileSystem.IsNotExist(err) {
 			copyFile = true
 		} else {
-			return 0, fmt.Errorf("error stating destination %q: %w", destination, err)
+			return 0, fmt.Errorf("error stating destination %q: %w", input.Destination, err)
 		}
 	} else {
 		if sourceFileInfo.Size() != destinationFileInfo.Size() {
 			copyFile = true
 		}
-		if checkTimestamps {
+		if input.CheckTimestamps {
 			if sourceFileInfo.ModTime() != destinationFileInfo.ModTime() {
 				copyFile = true
 			}
@@ -59,9 +75,16 @@ func Sync(ctx context.Context, source string, sourceFileSystem FileSystem, desti
 	}
 
 	if copyFile {
-		err = Copy(ctx, source, sourceFileSystem, destination, destinationFileSystem, parents, logger)
+		err = Copy(ctx, &CopyInput{
+			SourceName:            input.Source,
+			SourceFileSystem:      input.SourceFileSystem,
+			DestinationName:       input.Destination,
+			DestinationFileSystem: input.DestinationFileSystem,
+			Parents:               input.Parents,
+			Logger:                input.Logger,
+		})
 		if err != nil {
-			return 0, fmt.Errorf("error copying %q to %q: %w", source, destination, err)
+			return 0, fmt.Errorf("error copying %q to %q: %w", input.Source, input.Destination, err)
 		}
 		return 1, nil
 	}

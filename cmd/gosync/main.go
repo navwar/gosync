@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -57,7 +58,6 @@ const (
 	flagAWSS3Endpoint     = "aws-s3-endpoint"
 	flagAWSS3UsePathStyle = "aws-s3-use-path-style"
 	flagBucketKeyEnabled  = "aws-bucket-key-enabled"
-	flagAWSS3MaxPages     = "aws-s3-max-pages"
 )
 
 // AWS Defaults
@@ -74,9 +74,11 @@ const (
 	flagPoolSize            = "pool-size"
 	flagStopOnError         = "stop-on-error"
 	flagTimeout             = "timeout"
+	flagMaxPages            = "max-pages"
 	flagMaxDirectoryEntries = "max-directory-entries"
 	//
 	flagCheckTimestamps = "check-timestamps"
+	flagThreads         = "threads"
 )
 
 // Sync Defaults
@@ -112,7 +114,6 @@ func initAWSFlags(flag *pflag.FlagSet) {
 	flag.String(flagAWSS3Endpoint, "", "AWS S3 Endpoint URL")
 	flag.Bool(flagAWSS3UsePathStyle, false, "Use path-style addressing (default is to use virtual-host-style addressing)")
 	flag.Bool(flagBucketKeyEnabled, false, "bucket key enabled")
-	flag.Int(flagAWSS3MaxPages, -1, "maximum number of pages to return from AWS S3")
 }
 
 func initSyncFlags(flag *pflag.FlagSet) {
@@ -123,6 +124,8 @@ func initSyncFlags(flag *pflag.FlagSet) {
 	flag.Duration(flagTimeout, 0*time.Second, "maximum duration for copying an individual file before aborting")
 	flag.Bool(flagCheckTimestamps, false, "check timestamps")
 	flag.Int(flagMaxDirectoryEntries, -1, "maximum directory entries returned")
+	flag.Int(flagMaxPages, -1, "maximum number of pages to return from the filesystem when reading a directory")
+	flag.Int(flagThreads, 1, "maximum number of parallel threads")
 }
 
 func initLogFlags(flag *pflag.FlagSet) {
@@ -193,6 +196,9 @@ func checkConfig(v *viper.Viper, args []string) error {
 	}
 	if err := checkLogConfig(v, args); err != nil {
 		return fmt.Errorf("error with log configuration: %w", err)
+	}
+	if threads := v.GetInt(flagThreads); threads == 0 {
+		return errors.New("threads cannot be zero")
 	}
 	return nil
 }
@@ -441,8 +447,8 @@ func main() {
 			}
 
 			maxDirectoryEntries := v.GetInt(flagMaxDirectoryEntries)
-			maxPages := v.GetInt(flagAWSS3MaxPages)
-
+			maxPages := v.GetInt(flagMaxPages)
+			threads := v.GetInt(flagThreads)
 			syncLimit := v.GetInt(flagSyncLimit)
 
 			bucketKeyEnabled := v.GetBool(flagBucketKeyEnabled)
@@ -485,29 +491,25 @@ func main() {
 					"destination": destinationRelative,
 				})
 
-				/* Check source and destination
-				sourceDirectoryEntries, err := fileSystem.ReadDir(ctx, sourceRelative)
-				if err != nil {
-					return fmt.Errorf("error checking source: %w", err)
-				}
-				_ = logger.Log("Files at source", map[string]interface{}{
-					"files": sourceDirectoryEntries,
-				})
-				destinationDirectoryEntries, err := fileSystem.ReadDir(ctx, destinationRelative)
-				if err != nil {
-					return fmt.Errorf("error checking destination: %w", err)
-				}
-				_ = logger.Log("Files at destination", map[string]interface{}{
-					"files": destinationDirectoryEntries,
-				})
-				*/
-
 				//
 				// Synchronize
 				//
-				count, err := fileSystem.Sync(ctx, sourceRelative, destinationRelative, true, false, syncLimit, logger)
+				count, err := fileSystem.Sync(ctx, &fs.SyncInput{
+					Source:          sourceRelative,
+					Destination:     destinationRelative,
+					Parents:         true,
+					CheckTimestamps: false,
+					Limit:           syncLimit,
+					Logger:          logger,
+					MaxThreads:      threads,
+				})
 				if err != nil {
-					return fmt.Errorf("error synchronizing from %q to %q: %w", sourceURI, destinationURI, err)
+					_ = logger.Log("Error synchronizing", map[string]interface{}{
+						"source":      sourceURI,
+						"destination": destinationURI,
+						"err":         err.Error(),
+					})
+					os.Exit(1)
 				}
 
 				_ = logger.Log("Done synchronizing", map[string]interface{}{
@@ -565,33 +567,25 @@ func main() {
 					"destination": destinationRelative,
 				})
 
-				/* Check source and destination
-				sourceDirectoryEntries, err := fileSystem.ReadDir(ctx, sourceRelative)
-				if err != nil {
-					return fmt.Errorf("error checking source: %w", err)
-				}
-				_ = logger.Log("Files at source", map[string]interface{}{
-					"files": sourceDirectoryEntries,
-				})
-				destinationDirectoryEntries, err := fileSystem.ReadDir(ctx, destinationRelative)
-				if err != nil {
-					if ! fileSystem.IsNotExist(err) {
-						return fmt.Errorf("error checking destination: %w", err)
-					}
-					destinationDirectoryEntries = nil
-				}
-
-				_ = logger.Log("Files at destination", map[string]interface{}{
-					"files": destinationDirectoryEntries,
-				})
-				*/
-
 				//
 				// Synchronize
 				//
-				count, err := fileSystem.Sync(ctx, sourceRelative, destinationRelative, true, checkTimestamps, syncLimit, logger)
+				count, err := fileSystem.Sync(ctx, &fs.SyncInput{
+					Source:          sourceRelative,
+					Destination:     destinationRelative,
+					Parents:         true,
+					CheckTimestamps: checkTimestamps,
+					Limit:           syncLimit,
+					Logger:          logger,
+					MaxThreads:      threads,
+				})
 				if err != nil {
-					return fmt.Errorf("error synchronizing from %q to %q: %w", sourceURI, destinationURI, err)
+					_ = logger.Log("Error synchronizing", map[string]interface{}{
+						"source":      sourceURI,
+						"destination": destinationURI,
+						"err":         err.Error(),
+					})
+					os.Exit(1)
 				}
 
 				_ = logger.Log("Done synchronizing", map[string]interface{}{
@@ -609,11 +603,6 @@ func main() {
 			})
 			sourceFileSystem := initFileSystem(ctx, v, sourceURI, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
 
-			sourceDirectoryEntries, err := sourceFileSystem.ReadDir(ctx, "/")
-			_ = logger.Log("Files at source", map[string]interface{}{
-				"files": sourceDirectoryEntries,
-			})
-
 			// Destination File System
 			_ = logger.Log("Creating destination filesystem", map[string]interface{}{
 				"uri": destinationURI,
@@ -621,26 +610,27 @@ func main() {
 
 			destinationFileSystem := initFileSystem(ctx, v, destinationURI, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
 
-			destinationDirectoryEntries, err := destinationFileSystem.ReadDir(ctx, "/")
-			_ = logger.Log("Files at destination", map[string]interface{}{
-				"files": destinationDirectoryEntries,
-			})
-
 			//
 			// Synchronize
 			//
-			count, err := fs.Sync(
-				ctx,
-				"/",
-				sourceFileSystem,
-				"/",
-				destinationFileSystem,
-				true,
-				checkTimestamps,
-				syncLimit,
-				logger)
+			count, err := fs.Sync(ctx, &fs.SyncInput{
+				Source:                "/",
+				SourceFileSystem:      sourceFileSystem,
+				Destination:           "/",
+				DestinationFileSystem: destinationFileSystem,
+				Parents:               true,
+				CheckTimestamps:       checkTimestamps,
+				Limit:                 syncLimit,
+				Logger:                logger,
+				MaxThreads:            threads,
+			})
 			if err != nil {
-				return fmt.Errorf("error synchronizing from %q to %q: %w", sourceURI, destinationURI, err)
+				_ = logger.Log("Error synchronizing", map[string]interface{}{
+					"source":      sourceURI,
+					"destination": destinationURI,
+					"err":         err.Error(),
+				})
+				os.Exit(1)
 			}
 
 			_ = logger.Log("Done synchronizing", map[string]interface{}{

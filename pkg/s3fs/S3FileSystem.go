@@ -42,17 +42,17 @@ type S3FileSystem struct {
 	bucketKeyEnabled     bool
 }
 
-func (s3fs *S3FileSystem) Copy(ctx context.Context, source string, destination string, parents bool, logger fs.Logger) error {
-	if logger != nil {
-		logger.Log("Copying file", map[string]interface{}{
-			"src": source,
-			"dst": destination,
+func (s3fs *S3FileSystem) Copy(ctx context.Context, input *fs.CopyInput) error {
+	if input.Logger != nil {
+		input.Logger.Log("Copying file", map[string]interface{}{
+			"src": input.SourceName,
+			"dst": input.DestinationName,
 		})
 	}
 
-	sourceBucket, sourceKey := s3fs.parse(source)
+	sourceBucket, sourceKey := s3fs.parse(input.SourceName)
 
-	destinationBucket, destinationKey := s3fs.parse(destination)
+	destinationBucket, destinationKey := s3fs.parse(input.DestinationName)
 
 	_, err := s3fs.clients[s3fs.GetBucketRegion(destinationBucket)].CopyObject(ctx, &s3.CopyObjectInput{
 		ACL:              types.ObjectCannedACLBucketOwnerFullControl,
@@ -65,10 +65,10 @@ func (s3fs *S3FileSystem) Copy(ctx context.Context, source string, destination s
 		return err
 	}
 
-	if logger != nil {
-		logger.Log("Done copying file", map[string]interface{}{
-			"src": source,
-			"dst": destination,
+	if input.Logger != nil {
+		input.Logger.Log("Done copying file", map[string]interface{}{
+			"src": input.SourceName,
+			"dst": input.DestinationName,
 		})
 	}
 
@@ -254,7 +254,7 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.Direct
 			for _, object := range listObjectsOutput.Contents {
 				fileName := ""
 				if len(s3fs.bucket) == 0 {
-					fileName = strings.TrimPrefix(s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
+					fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
 				} else if len(s3fs.prefix) > 0 {
 					fileName = strings.TrimPrefix(strings.TrimPrefix(aws.ToString(object.Key), s3fs.prefix), name+"/")
 				} else {
@@ -300,7 +300,7 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.Direct
 			for _, object := range listObjectsOutput.Contents {
 				fileName := ""
 				if len(s3fs.bucket) == 0 {
-					fileName = strings.TrimPrefix(s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
+					fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
 				} else if len(s3fs.prefix) > 0 {
 					fileName = strings.TrimPrefix(strings.TrimPrefix(aws.ToString(object.Key), s3fs.prefix), name+"/")
 				} else {
@@ -325,6 +325,13 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.Direct
 	}
 
 	return directoryEntries, nil
+}
+
+func (s3fs *S3FileSystem) Root() string {
+	if len(s3fs.bucket) == 0 {
+		return "s3://"
+	}
+	return fmt.Sprintf("s3://%s%s", s3fs.bucket, s3fs.prefix)
 }
 
 func (s3fs *S3FileSystem) Size(ctx context.Context, name string) (int64, error) {
@@ -501,16 +508,17 @@ func (s3fs *S3FileSystem) OpenFile(ctx context.Context, name string, flag int, p
 	return NewS3File(name, readSeeker, multipartUpload), nil
 }
 
-func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory string, destinationDirectory string, checkTimestamps bool, limit int, logger fs.Logger) (int, error) {
+// func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory string, destinationDirectory string, checkTimestamps bool, limit int, logger fs.Logger) (int, error) {
+func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirectoryInput) (int, error) {
 
 	// limit is zero
-	if limit == 0 {
+	if input.Limit == 0 {
 		return 0, nil
 	}
 
-	sourceDirectoryEntries, err := s3fs.ReadDir(ctx, sourceDirectory)
+	sourceDirectoryEntries, err := s3fs.ReadDir(ctx, input.SourceDirectory)
 	if err != nil {
-		return 0, fmt.Errorf("error reading source directory %q: %w", sourceDirectory, err)
+		return 0, fmt.Errorf("error reading source directory %q: %w", input.SourceDirectory, err)
 	}
 
 	// wait group
@@ -521,15 +529,22 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory str
 
 	for _, sourceDirectoryEntry := range sourceDirectoryEntries {
 		sourceDirectoryEntry := sourceDirectoryEntry
-		sourceName := filepath.Join(sourceDirectory, sourceDirectoryEntry.Name())
-		destinationName := filepath.Join(destinationDirectory, sourceDirectoryEntry.Name())
+		sourceName := filepath.Join(input.SourceDirectory, sourceDirectoryEntry.Name())
+		destinationName := filepath.Join(input.DestinationDirectory, sourceDirectoryEntry.Name())
 		if sourceDirectoryEntry.IsDir() {
 			// synchronize directory and wait until all files are finished copying
 			directoryLimit := -1
-			if limit != -1 {
-				directoryLimit = limit - count
+			if input.Limit != -1 {
+				directoryLimit = input.Limit - count
 			}
-			c, err := s3fs.SyncDirectory(ctx, sourceName, destinationName, checkTimestamps, directoryLimit, logger)
+			c, err := s3fs.SyncDirectory(ctx, &fs.SyncDirectoryInput{
+				SourceDirectory:      sourceName,
+				DestinationDirectory: destinationName,
+				CheckTimestamps:      input.CheckTimestamps,
+				Limit:                directoryLimit,
+				Logger:               input.Logger,
+				MaxThreads:           input.MaxThreads,
+			})
 			if err != nil {
 				return 0, err
 			}
@@ -549,14 +564,19 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory str
 					if sourceDirectoryEntry.Size() != destinationFileInfo.Size() {
 						copyFile = true
 					}
-					if checkTimestamps {
+					if input.CheckTimestamps {
 						if sourceDirectoryEntry.ModTime() != destinationFileInfo.ModTime() {
 							copyFile = true
 						}
 					}
 				}
 				if copyFile {
-					err := s3fs.Copy(context.Background(), sourceName, destinationName, true, logger)
+					err := s3fs.Copy(context.Background(), &fs.CopyInput{
+						SourceName:      sourceName,
+						DestinationName: destinationName,
+						Parents:         true,
+						Logger:          input.Logger,
+					})
 					if err != nil {
 						return fmt.Errorf("error copying %q to %q: %w", sourceName, destinationName, err)
 					}
@@ -565,30 +585,30 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory str
 			})
 		}
 		// break if count is greater than or at the limit
-		if limit != -1 && count >= limit {
+		if input.Limit != -1 && count >= input.Limit {
 			break
 		}
 	}
 
 	// wait for all files in directory to copy before returning
 	if err := wg.Wait(); err != nil {
-		return 0, fmt.Errorf("error synchronizing directory %q to %q: %w", sourceDirectory, destinationDirectory, err)
+		return 0, fmt.Errorf("error synchronizing directory %q to %q: %w", input.SourceDirectory, input.DestinationDirectory, err)
 	}
 
 	return count, nil
 }
 
-func (s3fs *S3FileSystem) Sync(ctx context.Context, source string, destination string, parents bool, checkTimestamps bool, limit int, logger fs.Logger) (int, error) {
+func (s3fs *S3FileSystem) Sync(ctx context.Context, input *fs.SyncInput) (int, error) {
 
-	sourceFileInfo, err := s3fs.Stat(ctx, source)
+	sourceFileInfo, err := s3fs.Stat(ctx, input.Source)
 	if err != nil {
 		if s3fs.IsNotExist(err) {
-			return 0, fmt.Errorf("source does not exist %q: %w", source, err)
+			return 0, fmt.Errorf("source does not exist %q: %w", input.Source, err)
 		}
 	}
 
 	if len(s3fs.bucket) == 0 {
-		destinationBucket := strings.Split(strings.TrimPrefix(destination, "/"), "/")[0]
+		destinationBucket := strings.Split(strings.TrimPrefix(input.Destination, "/"), "/")[0]
 		_, err := s3fs.Stat(ctx, destinationBucket)
 		if err != nil {
 			if s3fs.IsNotExist(err) {
@@ -600,16 +620,27 @@ func (s3fs *S3FileSystem) Sync(ctx context.Context, source string, destination s
 
 	// if source is a directory
 	if sourceFileInfo.IsDir() {
-		if _, err := s3fs.Stat(ctx, destination); err != nil {
+		if _, err := s3fs.Stat(ctx, input.Destination); err != nil {
 			if s3fs.IsNotExist(err) {
-				if !parents {
-					return 0, fmt.Errorf("destination directory does not exist and parents is false: %q", destination)
+				if !input.Parents {
+					return 0, fmt.Errorf("destination directory does not exist and parents is false: %q", input.Destination)
 				}
 			}
 		}
-		count, err := s3fs.SyncDirectory(ctx, source, destination, checkTimestamps, limit, logger)
+		count, err := s3fs.SyncDirectory(ctx, &fs.SyncDirectoryInput{
+			SourceDirectory:      input.Source,
+			DestinationDirectory: input.Destination,
+			CheckTimestamps:      input.CheckTimestamps,
+			Limit:                input.Limit,
+			Logger:               input.Logger,
+			MaxThreads:           input.MaxThreads,
+		})
 		if err != nil {
-			return 0, fmt.Errorf("error syncing source directory %q to destination directory %q: %w", source, destination, err)
+			return 0, fmt.Errorf(
+				"error syncing source directory %q to destination directory %q: %w",
+				input.Source,
+				input.Destination,
+				err)
 		}
 		return count, nil
 	}
@@ -617,18 +648,18 @@ func (s3fs *S3FileSystem) Sync(ctx context.Context, source string, destination s
 	// if source is a file
 	copyFile := false
 
-	destinationFileInfo, err := s3fs.Stat(ctx, destination)
+	destinationFileInfo, err := s3fs.Stat(ctx, input.Destination)
 	if err != nil {
 		if s3fs.IsNotExist(err) {
 			copyFile = true
 		} else {
-			return 0, fmt.Errorf("error stating destination %q: %w", destination, err)
+			return 0, fmt.Errorf("error stating destination %q: %w", input.Destination, err)
 		}
 	} else {
 		if sourceFileInfo.Size() != destinationFileInfo.Size() {
 			copyFile = true
 		}
-		if checkTimestamps {
+		if input.CheckTimestamps {
 			if sourceFileInfo.ModTime() != destinationFileInfo.ModTime() {
 				copyFile = true
 			}
@@ -636,9 +667,14 @@ func (s3fs *S3FileSystem) Sync(ctx context.Context, source string, destination s
 	}
 
 	if copyFile {
-		err = s3fs.Copy(ctx, source, destination, parents, logger)
+		err = s3fs.Copy(ctx, &fs.CopyInput{
+			SourceName:      input.Source,
+			DestinationName: input.Destination,
+			Parents:         input.Parents,
+			Logger:          input.Logger,
+		})
 		if err != nil {
-			return 0, fmt.Errorf("error copying %q to %q: %w", source, destination, err)
+			return 0, fmt.Errorf("error copying %q to %q: %w", input.Source, input.Destination, err)
 		}
 		return 1, nil
 	}
