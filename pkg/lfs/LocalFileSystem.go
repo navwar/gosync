@@ -134,7 +134,7 @@ func (lfs *LocalFileSystem) Open(ctx context.Context, name string) (fs.File, err
 	if err != nil {
 		return nil, err
 	}
-	return f, nil
+	return NewLocalFile(f), nil
 }
 
 func (lfs *LocalFileSystem) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (fs.File, error) {
@@ -142,7 +142,7 @@ func (lfs *LocalFileSystem) OpenFile(ctx context.Context, name string, flag int,
 	if err != nil {
 		return nil, err
 	}
-	return f, nil
+	return NewLocalFile(f), nil
 }
 
 func (lfs *LocalFileSystem) ReadDir(ctx context.Context, name string) ([]fs.DirectoryEntry, error) {
@@ -237,7 +237,7 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDir
 						copyFile = true
 					}
 					if input.CheckTimestamps {
-						if sourceDirectoryEntry.ModTime() != destinationFileInfo.ModTime() {
+						if !sourceDirectoryEntry.ModTime().Equal(destinationFileInfo.ModTime()) {
 							copyFile = true
 						}
 					}
@@ -279,11 +279,20 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDir
 // func (lfs *LocalFileSystem) Sync(ctx context.Context, source string, destination string, parents bool, checkTimestamps bool, limit int, logger fs.Logger) (int, error) {
 func (lfs *LocalFileSystem) Sync(ctx context.Context, input *fs.SyncInput) (int, error) {
 
+	if input.Logger != nil {
+		input.Logger.Log("Synchronizing", map[string]interface{}{
+			"src":     input.Source,
+			"dst":     input.Destination,
+			"threads": input.MaxThreads,
+		})
+	}
+
 	sourceFileInfo, err := lfs.Stat(ctx, input.Source)
 	if err != nil {
 		if lfs.IsNotExist(err) {
 			return 0, fmt.Errorf("source does not exist %q: %w", input.Source, err)
 		}
+		return 0, fmt.Errorf("error stating source %q: %w", input.Source, err)
 	}
 
 	// if source is a directory
@@ -324,7 +333,7 @@ func (lfs *LocalFileSystem) Sync(ctx context.Context, input *fs.SyncInput) (int,
 			copyFile = true
 		}
 		if input.CheckTimestamps {
-			if sourceFileInfo.ModTime() != destinationFileInfo.ModTime() {
+			if !sourceFileInfo.ModTime().Equal(destinationFileInfo.ModTime()) {
 				copyFile = true
 			}
 		}

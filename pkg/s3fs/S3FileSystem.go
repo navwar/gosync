@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ type S3FileSystem struct {
 	maxEntries           int
 	maxPages             int
 	bucketKeyEnabled     bool
+	partSize             int64
 }
 
 func (s3fs *S3FileSystem) Chtimes(ctx context.Context, name string, atime time.Time, mtime time.Time) error {
@@ -447,11 +449,12 @@ func (s3fs *S3FileSystem) Open(ctx context.Context, name string) (fs.File, error
 		return nil, sizeError
 	}
 	bucket, key := s3fs.parse(name)
+	client := s3fs.clients[s3fs.GetBucketRegion(bucket)]
 	readSeeker := NewReadSeeker(
 		0,
 		size,
 		func(offset int64, p []byte) (int, error) {
-			getObjectOutput, err := s3fs.clients[s3fs.GetBucketRegion(bucket)].GetObject(ctx, &s3.GetObjectInput{
+			getObjectOutput, err := client.GetObject(ctx, &s3.GetObjectInput{
 				Bucket: aws.String(bucket),
 				Key:    aws.String(key),
 				Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, int(offset)+len(p)-1)),
@@ -467,7 +470,83 @@ func (s3fs *S3FileSystem) Open(ctx context.Context, name string) (fs.File, error
 			return len(body), nil
 		},
 	)
-	return NewS3File(name, readSeeker, nil), nil
+	downloader := Downloader(func(ctx context.Context, w io.WriterAt) (int64, error) {
+		// create wait group
+		wg := errgroup.Group{}
+		// set limit
+		wg.SetLimit(runtime.NumCPU())
+		// declare parts array
+		parts := []struct {
+			start int64
+			end   int64
+		}{}
+		// Create parts
+		for offset := int64(0); offset < size; offset += s3fs.partSize {
+			start := offset
+			end := start + s3fs.partSize - 1
+			if end >= size {
+				end = size - 1
+			}
+			parts = append(parts, struct {
+				start int64
+				end   int64
+			}{start: start, end: end})
+		}
+		writtenByPart := make([]int64, len(parts))
+		// iterate through parts
+		for i, part := range parts {
+			start := part.start
+			end := part.end
+			wg.Go(func() error {
+				getObjectOutput, err := client.GetObject(ctx, &s3.GetObjectInput{
+					Bucket: aws.String(bucket),
+					Key:    aws.String(key),
+					Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
+				})
+				if err != nil {
+					return fmt.Errorf(
+						"error reading object %q at range %d-%d: %w",
+						fmt.Sprintf("s3://%s/%s", bucket, key),
+						start,
+						end,
+						err)
+				}
+				body, err := io.ReadAll(getObjectOutput.Body)
+				if err != nil {
+					return fmt.Errorf(
+						"error reading body for object %q at range %d-%d: %w",
+						fmt.Sprintf("s3://%s/%s", bucket, key),
+						start,
+						end,
+						err)
+				}
+				n, err := w.WriteAt(body, start)
+				if err != nil {
+					return fmt.Errorf(
+						"error writing object %q at range %d-%d: %w",
+						fmt.Sprintf("s3://%s/%s", bucket, key),
+						start,
+						end,
+						err)
+				}
+				writtenByPart[i] = int64(n)
+				return nil
+			})
+		}
+
+		// Wait until all parts have been downloaded
+		err := wg.Wait()
+
+		// sum number of bytes written
+		sum := int64(0)
+		for _, n := range writtenByPart {
+			sum += n
+		}
+
+		// return sum and error if any
+		return sum, err
+	})
+	return NewS3File(name, readSeeker, downloader, nil), nil
 }
 
 func (s3fs *S3FileSystem) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (fs.File, error) {
@@ -485,6 +564,7 @@ func (s3fs *S3FileSystem) OpenFile(ctx context.Context, name string, flag int, p
 	client := s3fs.clients[s3fs.GetBucketRegion(bucket)]
 
 	var readSeeker *ReadSeeker
+	var downloader Downloader
 	multipartUpload := NewMultipartUpload(ctx, client, bucket, s3fs.bucketKeyEnabled, key)
 	if !doesNotExist {
 		readSeeker = NewReadSeeker(
@@ -507,9 +587,85 @@ func (s3fs *S3FileSystem) OpenFile(ctx context.Context, name string, flag int, p
 				return len(body), nil
 			},
 		)
+		downloader = Downloader(func(ctx context.Context, w io.WriterAt) (int64, error) {
+			// create wait group
+			wg := errgroup.Group{}
+			// set limit
+			wg.SetLimit(runtime.NumCPU())
+			// declare parts array
+			parts := []struct {
+				start int64
+				end   int64
+			}{}
+			// Create parts
+			for offset := int64(0); offset < size; offset += s3fs.partSize {
+				start := offset
+				end := start + s3fs.partSize - 1
+				if end >= size {
+					end = size - 1
+				}
+				parts = append(parts, struct {
+					start int64
+					end   int64
+				}{start: start, end: end})
+			}
+			writtenByPart := make([]int64, len(parts))
+			// iterate through parts
+			for i, part := range parts {
+				start := part.start
+				end := part.end
+				wg.Go(func() error {
+					getObjectOutput, err := client.GetObject(ctx, &s3.GetObjectInput{
+						Bucket: aws.String(bucket),
+						Key:    aws.String(key),
+						Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
+					})
+					if err != nil {
+						return fmt.Errorf(
+							"error reading object %q at range %d-%d: %w",
+							fmt.Sprintf("s3://%s/%s", bucket, key),
+							start,
+							end,
+							err)
+					}
+					body, err := io.ReadAll(getObjectOutput.Body)
+					if err != nil {
+						return fmt.Errorf(
+							"error reading body for object %q at range %d-%d: %w",
+							fmt.Sprintf("s3://%s/%s", bucket, key),
+							start,
+							end,
+							err)
+					}
+					n, err := w.WriteAt(body, start)
+					if err != nil {
+						return fmt.Errorf(
+							"error writing object %q at range %d-%d: %w",
+							fmt.Sprintf("s3://%s/%s", bucket, key),
+							start,
+							end,
+							err)
+					}
+					writtenByPart[i] = int64(n)
+					return nil
+				})
+			}
+
+			// Wait until all parts have been downloaded
+			err := wg.Wait()
+
+			// sum number of bytes written
+			sum := int64(0)
+			for _, n := range writtenByPart {
+				sum += n
+			}
+
+			// return sum and error if any
+			return sum, err
+		})
 	}
 
-	return NewS3File(name, readSeeker, multipartUpload), nil
+	return NewS3File(name, readSeeker, downloader, multipartUpload), nil
 }
 
 // func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory string, destinationDirectory string, checkTimestamps bool, limit int, logger fs.Logger) (int, error) {
@@ -569,7 +725,7 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirec
 						copyFile = true
 					}
 					if input.CheckTimestamps {
-						if sourceDirectoryEntry.ModTime() != destinationFileInfo.ModTime() {
+						if !fs.EqualTimestamp(sourceDirectoryEntry.ModTime(), destinationFileInfo.ModTime(), time.Second) {
 							copyFile = true
 						}
 					}
@@ -604,11 +760,20 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirec
 
 func (s3fs *S3FileSystem) Sync(ctx context.Context, input *fs.SyncInput) (int, error) {
 
+	if input.Logger != nil {
+		input.Logger.Log("Synchronizing", map[string]interface{}{
+			"src":     input.Source,
+			"dst":     input.Destination,
+			"threads": input.MaxThreads,
+		})
+	}
+
 	sourceFileInfo, err := s3fs.Stat(ctx, input.Source)
 	if err != nil {
 		if s3fs.IsNotExist(err) {
 			return 0, fmt.Errorf("source does not exist %q: %w", input.Source, err)
 		}
+		return 0, fmt.Errorf("error stating source %q: %w", input.Source, err)
 	}
 
 	if len(s3fs.bucket) == 0 {
@@ -664,7 +829,7 @@ func (s3fs *S3FileSystem) Sync(ctx context.Context, input *fs.SyncInput) (int, e
 			copyFile = true
 		}
 		if input.CheckTimestamps {
-			if sourceFileInfo.ModTime() != destinationFileInfo.ModTime() {
+			if !fs.EqualTimestamp(sourceFileInfo.ModTime(), destinationFileInfo.ModTime(), time.Second) {
 				copyFile = true
 			}
 		}
@@ -695,7 +860,8 @@ func NewS3FileSystem(
 	bucketCreationDates map[string]time.Time,
 	maxEntries int,
 	maxPages int,
-	bucketKeyEnabled bool) *S3FileSystem {
+	bucketKeyEnabled bool,
+	partSize int) *S3FileSystem {
 
 	// calculate earliest creation date
 	earliestCreationDate := time.Time{}
@@ -716,5 +882,6 @@ func NewS3FileSystem(
 		maxEntries:           maxEntries,
 		maxPages:             maxPages,
 		bucketKeyEnabled:     bucketKeyEnabled,
+		partSize:             int64(partSize),
 	}
 }

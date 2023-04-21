@@ -10,15 +10,25 @@ package fs
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 func Sync(ctx context.Context, input *SyncInput) (int, error) {
+
+	if input.Logger != nil {
+		input.Logger.Log("Synchronizing", map[string]interface{}{
+			"src":     input.Source,
+			"dst":     input.Destination,
+			"threads": input.MaxThreads,
+		})
+	}
 
 	sourceFileInfo, err := input.SourceFileSystem.Stat(ctx, input.Source)
 	if err != nil {
 		if input.SourceFileSystem.IsNotExist(err) {
 			return 0, fmt.Errorf("source does not exist %q: %w", input.Source, err)
 		}
+		return 0, fmt.Errorf("error stating source %q: %w", input.Source, err)
 	}
 
 	// if source is a directory
@@ -68,7 +78,7 @@ func Sync(ctx context.Context, input *SyncInput) (int, error) {
 			copyFile = true
 		}
 		if input.CheckTimestamps {
-			if sourceFileInfo.ModTime() != destinationFileInfo.ModTime() {
+			if !EqualTimestamp(sourceFileInfo.ModTime(), destinationFileInfo.ModTime(), time.Second) {
 				copyFile = true
 			}
 		}

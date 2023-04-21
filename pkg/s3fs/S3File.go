@@ -8,12 +8,19 @@
 package s3fs
 
 import (
+	"context"
+	"errors"
 	"io"
+
+	"github.com/deptofdefense/gosync/pkg/fs"
 )
+
+type Downloader func(ctx context.Context, w io.WriterAt) (int64, error)
 
 type S3File struct {
 	name        string
 	readSeeker  io.ReadSeeker
+	downloader  Downloader
 	writeCloser io.WriteCloser
 }
 
@@ -43,10 +50,22 @@ func (f *S3File) Write(p []byte) (n int, err error) {
 	return 0, nil
 }
 
-func NewS3File(name string, readSeeker io.ReadSeeker, writeCloser io.WriteCloser) *S3File {
+func (f *S3File) WriteAt(s []byte, o int64) (int, error) {
+	return 0, errors.New("S3File does not support the WriteAt function")
+}
+
+func (f *S3File) WriteTo(ctx context.Context, w fs.Writer) (int64, error) {
+	if f.downloader != nil {
+		return f.downloader(ctx, w)
+	}
+	return io.Copy(w, f.readSeeker)
+}
+
+func NewS3File(name string, readSeeker io.ReadSeeker, downloader Downloader, writeCloser io.WriteCloser) *S3File {
 	return &S3File{
 		name:        name,
 		readSeeker:  readSeeker,
+		downloader:  downloader,
 		writeCloser: writeCloser,
 	}
 }

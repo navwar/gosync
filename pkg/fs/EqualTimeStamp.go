@@ -8,13 +8,9 @@
 package fs
 
 import (
-	"context"
-	"io"
+	"time"
 )
 
-type File interface {
-	io.ReadSeekCloser
-	Writer
-	Name() string
-	WriteTo(ctx context.Context, w Writer) (int64, error)
+func EqualTimestamp(a time.Time, b time.Time, d time.Duration) bool {
+	return a.Truncate(d).Equal(b.Truncate(d))
 }

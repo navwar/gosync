@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -89,7 +90,7 @@ func SyncDirectory(ctx context.Context, input *SyncDirectoryInput) (int, error) 
 						copyFile = true
 					}
 					if input.CheckTimestamps {
-						if sourceDirectoryEntry.ModTime() != destinationFileInfo.ModTime() {
+						if !EqualTimestamp(sourceDirectoryEntry.ModTime(), destinationFileInfo.ModTime(), time.Second) {
 							copyFile = true
 						}
 					}

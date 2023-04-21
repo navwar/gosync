@@ -10,7 +10,6 @@ package fs
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"time"
 )
@@ -63,7 +62,7 @@ func Copy(ctx context.Context, input *CopyInput) error {
 	}
 
 	// copy bytes from source to destination
-	written, err := io.Copy(destinationFile, sourceFile)
+	written, err := sourceFile.WriteTo(ctx, destinationFile)
 	if err != nil {
 		_ = sourceFile.Close()      // silently close source file
 		_ = destinationFile.Close() // silently close destination file

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
@@ -79,12 +81,14 @@ const (
 	//
 	flagCheckTimestamps = "check-timestamps"
 	flagThreads         = "threads"
+	flagPartSize        = "part-size"
 )
 
 // Sync Defaults
 const (
 	DefaultPoolSize = 1
 	DefaultLimit    = -1
+	DefaultPartSize = 1_048_576 * 100 // 100 MB
 )
 
 // Log Flags
@@ -97,7 +101,7 @@ const (
 func initAWSFlags(flag *pflag.FlagSet) {
 	// Profile
 	flag.String(flagAWSPartition, "", "AWS Partition")
-	flag.String(flagAWSProfile, "", "AWS Profile")
+	flag.String(flagAWSProfile, "default", "AWS Profile")
 	flag.String(flagAWSDefaultRegion, "", "AWS Default Region")
 	flag.String(flagAWSRegion, "", "AWS Region (overrides default region)")
 	// Credentials
@@ -126,6 +130,7 @@ func initSyncFlags(flag *pflag.FlagSet) {
 	flag.Int(flagMaxDirectoryEntries, -1, "maximum directory entries returned")
 	flag.Int(flagMaxPages, -1, "maximum number of pages to return from the filesystem when reading a directory")
 	flag.Int(flagThreads, 1, "maximum number of parallel threads")
+	flag.Int(flagPartSize, DefaultPartSize, "size of parts when downloading")
 }
 
 func initLogFlags(flag *pflag.FlagSet) {
@@ -203,19 +208,19 @@ func checkConfig(v *viper.Viper, args []string) error {
 	return nil
 }
 
-func initS3Client(v *viper.Viper, partition string, region string) *s3.Client {
+func initS3Client(ctx context.Context, v *viper.Viper, profile string, partition string, region string) *s3.Client {
 	accessKeyID := v.GetString(flagAWSAccessKeyID)
 	secretAccessKey := v.GetString(flagAWSSecretAccessKey)
 	sessionToken := v.GetString(flagAWSSessionToken)
 	usePathStyle := v.GetBool(flagAWSS3UsePathStyle)
 
-	config := aws.Config{
-		RetryMaxAttempts: 3,
+	c := aws.Config{
+		RetryMaxAttempts: 5,
 		Region:           region,
 	}
 
 	if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
-		config.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(func(service string, region string, options ...interface{}) (aws.Endpoint, error) {
+		c.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(func(service string, region string, options ...interface{}) (aws.Endpoint, error) {
 			if service == s3.ServiceID {
 				endpoint := aws.Endpoint{
 					PartitionID:   partition,
@@ -229,15 +234,23 @@ func initS3Client(v *viper.Viper, partition string, region string) *s3.Client {
 	}
 
 	if len(accessKeyID) > 0 && len(secretAccessKey) > 0 {
-		config.Credentials = credentials.NewStaticCredentialsProvider(
+		c.Credentials = credentials.NewStaticCredentialsProvider(
 			accessKeyID,
 			secretAccessKey,
 			sessionToken)
+	} else {
+		sharedConfig, err := config.LoadSharedConfigProfile(ctx, profile)
+		if err == nil {
+			c.Credentials = credentials.NewStaticCredentialsProvider(
+				sharedConfig.Credentials.AccessKeyID,
+				sharedConfig.Credentials.SecretAccessKey,
+				"")
+		}
 	}
 
 	insecureSkipVerify := v.GetBool(flagAWSInsecureSkipVerify)
 	if insecureSkipVerify {
-		config.HTTPClient = &http.Client{
+		c.HTTPClient = &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: true,
@@ -246,14 +259,14 @@ func initS3Client(v *viper.Viper, partition string, region string) *s3.Client {
 		}
 	}
 
-	client := s3.NewFromConfig(config, func(o *s3.Options) {
+	client := s3.NewFromConfig(c, func(o *s3.Options) {
 		o.UsePathStyle = usePathStyle
 	})
 
 	return client
 }
 
-func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partition string, defaultRegion string, maxDirectoryEntries int, maxPages int, bucketKeyEnabled bool) fs.FileSystem {
+func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, profile string, partition string, defaultRegion string, maxDirectoryEntries int, maxPages int, bucketKeyEnabled bool) fs.FileSystem {
 	if strings.HasPrefix(rootPath, "s3://") {
 		//
 		// List all buckets in accounts and store creation date
@@ -265,7 +278,7 @@ func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partit
 		// Initialize Default Client
 		//
 
-		clients[defaultRegion] = initS3Client(v, partition, defaultRegion)
+		clients[defaultRegion] = initS3Client(ctx, v, profile, partition, defaultRegion)
 
 		//
 
@@ -310,7 +323,7 @@ func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partit
 
 			for _, bucketRegion := range bucketRegions {
 				if _, ok := clients[bucketRegion]; !ok {
-					clients[bucketRegion] = initS3Client(v, partition, bucketRegion)
+					clients[bucketRegion] = initS3Client(ctx, v, profile, partition, bucketRegion)
 				}
 			}
 
@@ -323,7 +336,8 @@ func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partit
 				bucketCreationDates,
 				maxDirectoryEntries,
 				maxPages,
-				bucketKeyEnabled)
+				bucketKeyEnabled,
+				v.GetInt(flagPartSize))
 		}
 
 		//
@@ -350,10 +364,10 @@ func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partit
 		//
 
 		if bucketRegion, ok := bucketRegions[bucketName]; ok {
-			clients[bucketRegion] = initS3Client(v, partition, bucketRegion)
+			clients[bucketRegion] = initS3Client(ctx, v, profile, partition, bucketRegion)
 		} else {
 			// It GetBucketLocation is not allowed, assume that the default region is the region containing the bucket
-			clients[defaultRegion] = initS3Client(v, partition, defaultRegion)
+			clients[defaultRegion] = initS3Client(ctx, v, profile, partition, defaultRegion)
 		}
 
 		return s3fs.NewS3FileSystem(
@@ -365,7 +379,8 @@ func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partit
 			bucketCreationDates,
 			maxDirectoryEntries,
 			maxPages,
-			bucketKeyEnabled)
+			bucketKeyEnabled,
+			v.GetInt(flagPartSize))
 	}
 
 	if strings.HasPrefix(rootPath, "file://") {
@@ -434,6 +449,11 @@ func main() {
 			sourceURI := args[0]
 			destinationURI := args[1]
 
+			profile := v.GetString(flagAWSProfile)
+			if len(profile) == 0 {
+				profile = "default"
+			}
+
 			partition := v.GetString(flagAWSPartition)
 			if len(partition) == 0 {
 				partition = "aws"
@@ -446,9 +466,20 @@ func main() {
 				}
 			}
 
+			// if neither region nor default region is specified
+			if len(region) == 0 {
+				sharedConfig, err := config.LoadSharedConfigProfile(ctx, profile)
+				if err == nil {
+					region = sharedConfig.Region
+				}
+			}
+
 			maxDirectoryEntries := v.GetInt(flagMaxDirectoryEntries)
 			maxPages := v.GetInt(flagMaxPages)
 			threads := v.GetInt(flagThreads)
+			if threads == -1 {
+				threads = runtime.NumCPU()
+			}
 			syncLimit := v.GetInt(flagSyncLimit)
 
 			bucketKeyEnabled := v.GetBool(flagBucketKeyEnabled)
@@ -483,7 +514,7 @@ func main() {
 					"root": root,
 				})
 
-				fileSystem := initFileSystem(ctx, v, root, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
+				fileSystem := initFileSystem(ctx, v, root, profile, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
 				sourceRelative := sourceURI[len(root):]
 				destinationRelative := destinationURI[len(root):]
 				_ = logger.Log("Relative paths", map[string]interface{}{
@@ -561,7 +592,16 @@ func main() {
 					"root": root,
 				})
 
-				fileSystem := initFileSystem(ctx, v, root, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
+				fileSystem := initFileSystem(
+					ctx,
+					v,
+					root,
+					profile,
+					partition,
+					region,
+					maxDirectoryEntries,
+					maxPages,
+					bucketKeyEnabled)
 				_ = logger.Log("Relative paths", map[string]interface{}{
 					"source":      sourceRelative,
 					"destination": destinationRelative,
@@ -601,14 +641,32 @@ func main() {
 			_ = logger.Log("Creating source filesystem", map[string]interface{}{
 				"uri": sourceURI,
 			})
-			sourceFileSystem := initFileSystem(ctx, v, sourceURI, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
+			sourceFileSystem := initFileSystem(
+				ctx,
+				v,
+				sourceURI,
+				profile,
+				partition,
+				region,
+				maxDirectoryEntries,
+				maxPages,
+				bucketKeyEnabled)
 
 			// Destination File System
 			_ = logger.Log("Creating destination filesystem", map[string]interface{}{
 				"uri": destinationURI,
 			})
 
-			destinationFileSystem := initFileSystem(ctx, v, destinationURI, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
+			destinationFileSystem := initFileSystem(
+				ctx,
+				v,
+				destinationURI,
+				profile,
+				partition,
+				region,
+				maxDirectoryEntries,
+				maxPages,
+				bucketKeyEnabled)
 
 			//
 			// Synchronize
