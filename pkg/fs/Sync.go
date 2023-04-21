@@ -10,12 +10,9 @@ package fs
 import (
 	"context"
 	"fmt"
-	"os"
 )
 
-func Sync(ctx context.Context, source string, sourceFileSystem FileSystem, destination string, destinationFileSystem FileSystem, parents bool, checkTimestamps bool, limit int) (int, error) {
-
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("Sync(%q,%q,%v,%v,%d)", source, destination, parents, checkTimestamps, limit))
+func Sync(ctx context.Context, source string, sourceFileSystem FileSystem, destination string, destinationFileSystem FileSystem, parents bool, checkTimestamps bool, limit int, logger Logger) (int, error) {
 
 	sourceFileInfo, err := sourceFileSystem.Stat(ctx, source)
 	if err != nil {
@@ -33,7 +30,7 @@ func Sync(ctx context.Context, source string, sourceFileSystem FileSystem, desti
 				}
 			}
 		}
-		count, err := SyncDirectory(ctx, source, sourceFileSystem, destination, destinationFileSystem, checkTimestamps, limit)
+		count, err := SyncDirectory(ctx, source, sourceFileSystem, destination, destinationFileSystem, checkTimestamps, limit, logger)
 		if err != nil {
 			return 0, fmt.Errorf("error syncing source directory %q to destination directory %q: %w", source, destination, err)
 		}
@@ -62,7 +59,7 @@ func Sync(ctx context.Context, source string, sourceFileSystem FileSystem, desti
 	}
 
 	if copyFile {
-		err = Copy(ctx, source, sourceFileSystem, destination, destinationFileSystem, parents)
+		err = Copy(ctx, source, sourceFileSystem, destination, destinationFileSystem, parents, logger)
 		if err != nil {
 			return 0, fmt.Errorf("error copying %q to %q: %w", source, destination, err)
 		}

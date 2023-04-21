@@ -38,11 +38,17 @@ type S3FileSystem struct {
 	bucketCreationDates  map[string]time.Time
 	earliestCreationDate time.Time
 	maxEntries           int
+	maxPages             int
 	bucketKeyEnabled     bool
 }
 
-func (s3fs *S3FileSystem) Copy(ctx context.Context, source string, destination string, parents bool) error {
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("Copy(%q,%q,%v)", source, destination, parents))
+func (s3fs *S3FileSystem) Copy(ctx context.Context, source string, destination string, parents bool, logger fs.Logger) error {
+	if logger != nil {
+		logger.Log("Copying file", map[string]interface{}{
+			"src": source,
+			"dst": destination,
+		})
+	}
 
 	sourceBucket, sourceKey := s3fs.parse(source)
 
@@ -57,6 +63,13 @@ func (s3fs *S3FileSystem) Copy(ctx context.Context, source string, destination s
 	})
 	if err != nil {
 		return err
+	}
+
+	if logger != nil {
+		logger.Log("Done copying file", map[string]interface{}{
+			"src": source,
+			"dst": destination,
+		})
 	}
 
 	return nil
@@ -152,7 +165,6 @@ func (s3fs *S3FileSystem) MkdirAll(ctx context.Context, name string, mode os.Fil
 }
 
 func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.DirectoryEntry, error) {
-	fmt.Println(fmt.Sprintf("ReadDir(%q)", name))
 	bucket := ""
 	delimiter := aws.String("/")
 	prefix := ""
@@ -197,7 +209,7 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.Direct
 	//truncated := true
 	var marker *string
 	// if truncated continue iterating through the bucket
-	for i := 0; i < 20; i++ {
+	for i := 0; s3fs.maxPages == -1 || i < s3fs.maxPages; i++ {
 		listObjectsInput := &s3.ListObjectsInput{
 			Bucket:    aws.String(bucket),
 			Delimiter: delimiter,
@@ -223,6 +235,9 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.Direct
 				} else {
 					directoryName = strings.TrimPrefix("/"+strings.TrimPrefix(directoryPrefix, s3fs.prefix), name+"/")
 				}
+				if directoryName == "" {
+					panic("hey1")
+				}
 				directoryEntries = append(directoryEntries, &S3DirectoryEntry{
 					name:    directoryName,
 					dir:     true,
@@ -245,12 +260,16 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.Direct
 				} else {
 					fileName = strings.TrimPrefix("/"+aws.ToString(object.Key), name+"/")
 				}
-				directoryEntries = append(directoryEntries, &S3DirectoryEntry{
-					name:    fileName,
-					dir:     (object.Size == 0),
-					modTime: aws.ToTime(object.LastModified),
-					size:    object.Size,
-				})
+				// fileName is a blank string then there is a directory marker in s3,
+				// and you returned itself, so you can safely skip this one.
+				if fileName != "" {
+					directoryEntries = append(directoryEntries, &S3DirectoryEntry{
+						name:    fileName,
+						dir:     (object.Size == 0),
+						modTime: aws.ToTime(object.LastModified),
+						size:    object.Size,
+					})
+				}
 				if len(directoryEntries) == s3fs.maxEntries {
 					break
 				}
@@ -268,6 +287,9 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.Direct
 				} else {
 					directoryName = strings.TrimPrefix("/"+strings.TrimPrefix(directoryPrefix, s3fs.prefix), name+"/")
 				}
+				if directoryName == "" {
+					panic("hey3")
+				}
 				directoryEntries = append(directoryEntries, &S3DirectoryEntry{
 					name:    directoryName,
 					dir:     true,
@@ -284,12 +306,16 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.Direct
 				} else {
 					fileName = strings.TrimPrefix("/"+aws.ToString(object.Key), name+"/")
 				}
-				directoryEntries = append(directoryEntries, &S3DirectoryEntry{
-					name:    fileName,
-					dir:     (object.Size == 0),
-					modTime: aws.ToTime(object.LastModified),
-					size:    object.Size,
-				})
+				// fileName is a blank string then there is a directory marker in s3,
+				// and you returned itself, so you can safely skip this one.
+				if fileName != "" {
+					directoryEntries = append(directoryEntries, &S3DirectoryEntry{
+						name:    fileName,
+						dir:     (object.Size == 0),
+						modTime: aws.ToTime(object.LastModified),
+						size:    object.Size,
+					})
+				}
 			}
 		}
 		if !listObjectsOutput.IsTruncated {
@@ -405,13 +431,11 @@ func (s3fs *S3FileSystem) Stat(ctx context.Context, name string) (fs.FileInfo, e
 }
 
 func (s3fs *S3FileSystem) Open(ctx context.Context, name string) (fs.File, error) {
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("Open(%q)", name))
 	size, sizeError := s3fs.Size(ctx, name)
 	if sizeError != nil {
 		return nil, sizeError
 	}
 	bucket, key := s3fs.parse(name)
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("Open(%q) => Bucket/Key => (%q,%q)", name, bucket, key))
 	readSeeker := NewReadSeeker(
 		0,
 		size,
@@ -429,7 +453,7 @@ func (s3fs *S3FileSystem) Open(ctx context.Context, name string) (fs.File, error
 				return 0, err
 			}
 			copy(p, body)
-			return len(p), nil
+			return len(body), nil
 		},
 	)
 	return NewS3File(name, readSeeker, nil), nil
@@ -469,7 +493,7 @@ func (s3fs *S3FileSystem) OpenFile(ctx context.Context, name string, flag int, p
 					return 0, err
 				}
 				copy(p, body)
-				return len(p), nil
+				return len(body), nil
 			},
 		)
 	}
@@ -477,8 +501,7 @@ func (s3fs *S3FileSystem) OpenFile(ctx context.Context, name string, flag int, p
 	return NewS3File(name, readSeeker, multipartUpload), nil
 }
 
-func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory string, destinationDirectory string, checkTimestamps bool, limit int) (int, error) {
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("SyncDirectory(%q,%q,%v,%d)", sourceDirectory, destinationDirectory, checkTimestamps, limit))
+func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory string, destinationDirectory string, checkTimestamps bool, limit int, logger fs.Logger) (int, error) {
 
 	// limit is zero
 	if limit == 0 {
@@ -506,7 +529,7 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory str
 			if limit != -1 {
 				directoryLimit = limit - count
 			}
-			c, err := s3fs.SyncDirectory(ctx, sourceName, destinationName, checkTimestamps, directoryLimit)
+			c, err := s3fs.SyncDirectory(ctx, sourceName, destinationName, checkTimestamps, directoryLimit, logger)
 			if err != nil {
 				return 0, err
 			}
@@ -533,7 +556,7 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory str
 					}
 				}
 				if copyFile {
-					err := s3fs.Copy(context.Background(), sourceName, destinationName, true)
+					err := s3fs.Copy(context.Background(), sourceName, destinationName, true, logger)
 					if err != nil {
 						return fmt.Errorf("error copying %q to %q: %w", sourceName, destinationName, err)
 					}
@@ -555,9 +578,7 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, sourceDirectory str
 	return count, nil
 }
 
-func (s3fs *S3FileSystem) Sync(ctx context.Context, source string, destination string, parents bool, checkTimestamps bool, limit int) (int, error) {
-
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("Sync(%q,%q,%v,%v,%d)", source, destination, parents, checkTimestamps, limit))
+func (s3fs *S3FileSystem) Sync(ctx context.Context, source string, destination string, parents bool, checkTimestamps bool, limit int, logger fs.Logger) (int, error) {
 
 	sourceFileInfo, err := s3fs.Stat(ctx, source)
 	if err != nil {
@@ -586,7 +607,7 @@ func (s3fs *S3FileSystem) Sync(ctx context.Context, source string, destination s
 				}
 			}
 		}
-		count, err := s3fs.SyncDirectory(ctx, source, destination, checkTimestamps, limit)
+		count, err := s3fs.SyncDirectory(ctx, source, destination, checkTimestamps, limit, logger)
 		if err != nil {
 			return 0, fmt.Errorf("error syncing source directory %q to destination directory %q: %w", source, destination, err)
 		}
@@ -615,7 +636,7 @@ func (s3fs *S3FileSystem) Sync(ctx context.Context, source string, destination s
 	}
 
 	if copyFile {
-		err = s3fs.Copy(ctx, source, destination, parents)
+		err = s3fs.Copy(ctx, source, destination, parents, logger)
 		if err != nil {
 			return 0, fmt.Errorf("error copying %q to %q: %w", source, destination, err)
 		}
@@ -633,9 +654,8 @@ func NewS3FileSystem(
 	bucketRegions map[string]string,
 	bucketCreationDates map[string]time.Time,
 	maxEntries int,
+	maxPages int,
 	bucketKeyEnabled bool) *S3FileSystem {
-
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("NewS3FileSystem(%q,%q,%q)", defaultRegion, bucket, prefix))
 
 	// calculate earliest creation date
 	earliestCreationDate := time.Time{}
@@ -654,6 +674,7 @@ func NewS3FileSystem(
 		bucketCreationDates:  bucketCreationDates,
 		earliestCreationDate: earliestCreationDate,
 		maxEntries:           maxEntries,
+		maxPages:             maxPages,
 		bucketKeyEnabled:     bucketKeyEnabled,
 	}
 }

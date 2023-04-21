@@ -10,14 +10,12 @@ package fs
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"golang.org/x/sync/errgroup"
 )
 
-func SyncDirectory(ctx context.Context, sourceDirectory string, sourceFileSystem FileSystem, destinationDirectory string, destinationFileSystem FileSystem, checkTimestamps bool, limit int) (int, error) {
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("SyncDirectory(%q,%q,%v,%d)", sourceDirectory, destinationDirectory, checkTimestamps, limit))
+func SyncDirectory(ctx context.Context, sourceDirectory string, sourceFileSystem FileSystem, destinationDirectory string, destinationFileSystem FileSystem, checkTimestamps bool, limit int, logger Logger) (int, error) {
 
 	// limit is zero
 	if limit == 0 {
@@ -29,8 +27,6 @@ func SyncDirectory(ctx context.Context, sourceDirectory string, sourceFileSystem
 		return 0, fmt.Errorf("error reading source directory %q: %w", sourceDirectory, err)
 	}
 
-	fmt.Fprintln(os.Stderr, fmt.Sprintf("sourceFileSystem.ReadDir(ctx,%q) => %s", sourceDirectory, sourceDirectoryEntries))
-
 	// wait group
 	var wg errgroup.Group
 
@@ -38,6 +34,9 @@ func SyncDirectory(ctx context.Context, sourceDirectory string, sourceFileSystem
 	count := 0
 
 	for _, sourceDirectoryEntry := range sourceDirectoryEntries {
+		if sourceDirectoryEntry.Name() == "" {
+			panic("yo!")
+		}
 		sourceDirectoryEntry := sourceDirectoryEntry
 		sourceName := filepath.Join(sourceDirectory, sourceDirectoryEntry.Name())
 		destinationName := filepath.Join(destinationDirectory, sourceDirectoryEntry.Name())
@@ -54,7 +53,8 @@ func SyncDirectory(ctx context.Context, sourceDirectory string, sourceFileSystem
 				destinationName,
 				destinationFileSystem,
 				checkTimestamps,
-				directoryLimit)
+				directoryLimit,
+				logger)
 			if err != nil {
 				return 0, err
 			}
@@ -81,9 +81,15 @@ func SyncDirectory(ctx context.Context, sourceDirectory string, sourceFileSystem
 					}
 				}
 				if copyFile {
-					err := Copy(context.Background(), sourceName, sourceFileSystem, destinationName, destinationFileSystem, true)
+					err := Copy(context.Background(), sourceName, sourceFileSystem, destinationName, destinationFileSystem, true, logger)
 					if err != nil {
 						return fmt.Errorf("error copying %q to %q: %w", sourceName, destinationName, err)
+					}
+				} else {
+					if logger != nil {
+						logger.Log("Skipping file", map[string]interface{}{
+							"src": sourceName,
+						})
 					}
 				}
 				return nil

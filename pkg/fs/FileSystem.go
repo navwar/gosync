@@ -13,7 +13,7 @@ import (
 )
 
 type FileSystem interface {
-	Copy(ctx context.Context, source string, destination string, parents bool) error
+	Copy(ctx context.Context, source string, destination string, parents bool, logger Logger) error
 	Dir(name string) string
 	IsNotExist(err error) bool
 	Join(name ...string) string
@@ -23,6 +23,6 @@ type FileSystem interface {
 	ReadDir(ctx context.Context, name string) ([]DirectoryEntry, error)
 	Size(ctx context.Context, name string) (int64, error)
 	Stat(ctx context.Context, name string) (FileInfo, error)
-	Sync(ctx context.Context, source string, destination string, parents bool, checkTimestamps bool, limit int) (int, error)
-	SyncDirectory(ctx context.Context, source string, destinationDirectory string, checkTimestamps bool, limit int) (int, error)
+	Sync(ctx context.Context, source string, destination string, parents bool, checkTimestamps bool, limit int, logger Logger) (int, error)
+	SyncDirectory(ctx context.Context, source string, destinationDirectory string, checkTimestamps bool, limit int, logger Logger) (int, error)
 }

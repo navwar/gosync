@@ -15,7 +15,14 @@ import (
 )
 
 // Split splits the path using the path separator for the local operating system
-func Copy(ctx context.Context, sourceName string, sourceFileSystem FileSystem, destinationName string, destinationFileSystem FileSystem, parents bool) error {
+func Copy(ctx context.Context, sourceName string, sourceFileSystem FileSystem, destinationName string, destinationFileSystem FileSystem, parents bool, logger Logger) error {
+	if logger != nil {
+		logger.Log("Copying file", map[string]interface{}{
+			"src": sourceName,
+			"dst": destinationName,
+		})
+	}
+
 	// open source file
 	sourceFile, err := sourceFileSystem.Open(ctx, sourceName)
 	if err != nil {
@@ -49,7 +56,7 @@ func Copy(ctx context.Context, sourceName string, sourceFileSystem FileSystem, d
 	}
 
 	// copy bytes from source to destination
-	_, err = io.Copy(destinationFile, sourceFile)
+	written, err := io.Copy(destinationFile, sourceFile)
 	if err != nil {
 		_ = sourceFile.Close()      // silently close source file
 		_ = destinationFile.Close() // silently close destination file
@@ -65,6 +72,14 @@ func Copy(ctx context.Context, sourceName string, sourceFileSystem FileSystem, d
 	err = destinationFile.Close()
 	if err != nil {
 		return fmt.Errorf("error closing destination file after copying: %w", err)
+	}
+
+	if logger != nil {
+		logger.Log("Done copying file", map[string]interface{}{
+			"src":     sourceName,
+			"dst":     destinationName,
+			"written": written,
+		})
 	}
 
 	return nil

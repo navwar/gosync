@@ -57,6 +57,7 @@ const (
 	flagAWSS3Endpoint     = "aws-s3-endpoint"
 	flagAWSS3UsePathStyle = "aws-s3-use-path-style"
 	flagBucketKeyEnabled  = "aws-bucket-key-enabled"
+	flagAWSS3MaxPages     = "aws-s3-max-pages"
 )
 
 // AWS Defaults
@@ -111,6 +112,7 @@ func initAWSFlags(flag *pflag.FlagSet) {
 	flag.String(flagAWSS3Endpoint, "", "AWS S3 Endpoint URL")
 	flag.Bool(flagAWSS3UsePathStyle, false, "Use path-style addressing (default is to use virtual-host-style addressing)")
 	flag.Bool(flagBucketKeyEnabled, false, "bucket key enabled")
+	flag.Int(flagAWSS3MaxPages, -1, "maximum number of pages to return from AWS S3")
 }
 
 func initSyncFlags(flag *pflag.FlagSet) {
@@ -245,7 +247,7 @@ func initS3Client(v *viper.Viper, partition string, region string) *s3.Client {
 	return client
 }
 
-func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partition string, defaultRegion string, maxDirectoryEntries int, bucketKeyEnabled bool) fs.FileSystem {
+func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partition string, defaultRegion string, maxDirectoryEntries int, maxPages int, bucketKeyEnabled bool) fs.FileSystem {
 	if strings.HasPrefix(rootPath, "s3://") {
 		//
 		// List all buckets in accounts and store creation date
@@ -314,6 +316,7 @@ func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partit
 				bucketRegions,
 				bucketCreationDates,
 				maxDirectoryEntries,
+				maxPages,
 				bucketKeyEnabled)
 		}
 
@@ -355,6 +358,7 @@ func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partit
 			bucketRegions,
 			bucketCreationDates,
 			maxDirectoryEntries,
+			maxPages,
 			bucketKeyEnabled)
 	}
 
@@ -437,6 +441,7 @@ func main() {
 			}
 
 			maxDirectoryEntries := v.GetInt(flagMaxDirectoryEntries)
+			maxPages := v.GetInt(flagAWSS3MaxPages)
 
 			syncLimit := v.GetInt(flagSyncLimit)
 
@@ -472,7 +477,7 @@ func main() {
 					"root": root,
 				})
 
-				fileSystem := initFileSystem(ctx, v, root, partition, region, maxDirectoryEntries, bucketKeyEnabled)
+				fileSystem := initFileSystem(ctx, v, root, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
 				sourceRelative := sourceURI[len(root):]
 				destinationRelative := destinationURI[len(root):]
 				_ = logger.Log("Relative paths", map[string]interface{}{
@@ -500,7 +505,7 @@ func main() {
 				//
 				// Synchronize
 				//
-				count, err := fileSystem.Sync(ctx, sourceRelative, destinationRelative, true, false, syncLimit)
+				count, err := fileSystem.Sync(ctx, sourceRelative, destinationRelative, true, false, syncLimit, logger)
 				if err != nil {
 					return fmt.Errorf("error synchronizing from %q to %q: %w", sourceURI, destinationURI, err)
 				}
@@ -554,7 +559,7 @@ func main() {
 					"root": root,
 				})
 
-				fileSystem := initFileSystem(ctx, v, root, partition, region, maxDirectoryEntries, bucketKeyEnabled)
+				fileSystem := initFileSystem(ctx, v, root, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
 				_ = logger.Log("Relative paths", map[string]interface{}{
 					"source":      sourceRelative,
 					"destination": destinationRelative,
@@ -584,7 +589,7 @@ func main() {
 				//
 				// Synchronize
 				//
-				count, err := fileSystem.Sync(ctx, sourceRelative, destinationRelative, true, checkTimestamps, syncLimit)
+				count, err := fileSystem.Sync(ctx, sourceRelative, destinationRelative, true, checkTimestamps, syncLimit, logger)
 				if err != nil {
 					return fmt.Errorf("error synchronizing from %q to %q: %w", sourceURI, destinationURI, err)
 				}
@@ -602,7 +607,7 @@ func main() {
 			_ = logger.Log("Creating source filesystem", map[string]interface{}{
 				"uri": sourceURI,
 			})
-			sourceFileSystem := initFileSystem(ctx, v, sourceURI, partition, region, maxDirectoryEntries, bucketKeyEnabled)
+			sourceFileSystem := initFileSystem(ctx, v, sourceURI, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
 
 			sourceDirectoryEntries, err := sourceFileSystem.ReadDir(ctx, "/")
 			_ = logger.Log("Files at source", map[string]interface{}{
@@ -614,7 +619,7 @@ func main() {
 				"uri": destinationURI,
 			})
 
-			destinationFileSystem := initFileSystem(ctx, v, destinationURI, partition, region, maxDirectoryEntries, bucketKeyEnabled)
+			destinationFileSystem := initFileSystem(ctx, v, destinationURI, partition, region, maxDirectoryEntries, maxPages, bucketKeyEnabled)
 
 			destinationDirectoryEntries, err := destinationFileSystem.ReadDir(ctx, "/")
 			_ = logger.Log("Files at destination", map[string]interface{}{
@@ -624,7 +629,16 @@ func main() {
 			//
 			// Synchronize
 			//
-			count, err := fs.Sync(ctx, "/", sourceFileSystem, "/", destinationFileSystem, true, checkTimestamps, syncLimit)
+			count, err := fs.Sync(
+				ctx,
+				"/",
+				sourceFileSystem,
+				"/",
+				destinationFileSystem,
+				true,
+				checkTimestamps,
+				syncLimit,
+				logger)
 			if err != nil {
 				return fmt.Errorf("error synchronizing from %q to %q: %w", sourceURI, destinationURI, err)
 			}
