@@ -28,6 +28,14 @@ type LocalFileSystem struct {
 	root string
 }
 
+func (lfs *LocalFileSystem) Chtimes(ctx context.Context, name string, atime time.Time, mtime time.Time) error {
+	err := lfs.fs.Chtimes(name, atime, mtime)
+	if err != nil {
+		return fmt.Errorf("error changing timestamps for file %q: %w", name, err)
+	}
+	return nil
+}
+
 func (lfs *LocalFileSystem) Copy(ctx context.Context, input *fs.CopyInput) error {
 	if input.Logger != nil {
 		input.Logger.Log("Copying file", map[string]interface{}{
@@ -89,7 +97,7 @@ func (lfs *LocalFileSystem) Copy(ctx context.Context, input *fs.CopyInput) error
 	}
 
 	// Preserve Modification time
-	err = lfs.fs.Chtimes(input.DestinationName, time.Now(), sourceFileInfo.ModTime())
+	err = lfs.Chtimes(ctx, input.DestinationName, time.Now(), sourceFileInfo.ModTime())
 	if err != nil {
 		return fmt.Errorf("error changing timestamps for destination %q after copying: %w", input.DestinationName, err)
 	}

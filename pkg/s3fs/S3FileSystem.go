@@ -42,6 +42,10 @@ type S3FileSystem struct {
 	bucketKeyEnabled     bool
 }
 
+func (s3fs *S3FileSystem) Chtimes(ctx context.Context, name string, atime time.Time, mtime time.Time) error {
+	return nil
+}
+
 func (s3fs *S3FileSystem) Copy(ctx context.Context, input *fs.CopyInput) error {
 	if input.Logger != nil {
 		input.Logger.Log("Copying file", map[string]interface{}{

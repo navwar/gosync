@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 )
 
 // Split splits the path using the path separator for the local operating system
@@ -21,6 +22,12 @@ func Copy(ctx context.Context, input *CopyInput) error {
 			"src": input.SourceName,
 			"dst": input.DestinationName,
 		})
+	}
+
+	// stat source file
+	sourceFileInfo, err := input.SourceFileSystem.Stat(ctx, input.SourceName)
+	if err != nil {
+		return fmt.Errorf("error stating source file at %q: %w", input.SourceName, err)
 	}
 
 	// open source file
@@ -72,6 +79,15 @@ func Copy(ctx context.Context, input *CopyInput) error {
 	err = destinationFile.Close()
 	if err != nil {
 		return fmt.Errorf("error closing destination file after copying: %w", err)
+	}
+
+	// Preserve Modification time
+	err = input.DestinationFileSystem.Chtimes(ctx, input.DestinationName, time.Now(), sourceFileInfo.ModTime())
+	if err != nil {
+		return fmt.Errorf(
+			"error changing timestamps for destination %q after copying: %w",
+			input.DestinationName,
+			err)
 	}
 
 	if input.Logger != nil {
