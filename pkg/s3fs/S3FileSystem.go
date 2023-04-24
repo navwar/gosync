@@ -237,12 +237,19 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.Direct
 				directoryPrefix := strings.TrimRight(aws.ToString(commonPrefix.Prefix), "/")
 				directoryName := ""
 				if len(s3fs.bucket) == 0 {
-					directoryName = strings.TrimPrefix(s3fs.Join("/", bucket, directoryPrefix), name+"/")
+					// if root is s3://
+					if strings.HasPrefix(name, "/") {
+						directoryName = strings.TrimPrefix("/"+s3fs.Join(bucket, directoryPrefix), name+"/")
+					} else {
+						directoryName = strings.TrimPrefix(s3fs.Join(bucket, directoryPrefix), name+"/")
+					}
+				} else if len(s3fs.prefix) > 0 {
+					directoryName = strings.TrimPrefix(strings.TrimPrefix(directoryPrefix, s3fs.prefix), name+"/")
 				} else {
-					directoryName = strings.TrimPrefix("/"+strings.TrimPrefix(directoryPrefix, s3fs.prefix), name+"/")
+					directoryName = strings.TrimPrefix("/"+directoryPrefix, name+"/")
 				}
 				if directoryName == "" {
-					panic("hey1")
+					panic("directoryName is empty, which should never happen")
 				}
 				directoryEntries = append(directoryEntries, &S3DirectoryEntry{
 					name:    directoryName,
@@ -289,12 +296,19 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]fs.Direct
 				directoryPrefix := strings.TrimRight(aws.ToString(commonPrefix.Prefix), "/")
 				directoryName := ""
 				if len(s3fs.bucket) == 0 {
-					directoryName = strings.TrimPrefix(s3fs.Join(bucket, directoryPrefix), name+"/")
+					// if root is s3://
+					if strings.HasPrefix(name, "/") {
+						directoryName = strings.TrimPrefix("/"+s3fs.Join(bucket, directoryPrefix), name+"/")
+					} else {
+						directoryName = strings.TrimPrefix(s3fs.Join(bucket, directoryPrefix), name+"/")
+					}
+				} else if len(s3fs.prefix) > 0 {
+					directoryName = strings.TrimPrefix(strings.TrimPrefix(directoryPrefix, s3fs.prefix), name+"/")
 				} else {
-					directoryName = strings.TrimPrefix("/"+strings.TrimPrefix(directoryPrefix, s3fs.prefix), name+"/")
+					directoryName = strings.TrimPrefix("/"+directoryPrefix, name+"/")
 				}
 				if directoryName == "" {
-					panic("hey3")
+					panic("directoryName is empty, which should never happen")
 				}
 				directoryEntries = append(directoryEntries, &S3DirectoryEntry{
 					name:    directoryName,
