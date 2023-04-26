@@ -36,7 +36,7 @@ import (
 )
 
 const (
-	GoSyncVersion = "0.0.1"
+	GoSyncVersion = "0.0.2"
 )
 
 // AWS Flags
