@@ -11,6 +11,7 @@ type SyncInput struct {
 	Source                string // could be file or directory
 	SourceFileSystem      FileSystem
 	Destination           string // could be file or directory
+	Exclude               []string
 	DestinationFileSystem FileSystem
 	Parents               bool
 	CheckTimestamps       bool

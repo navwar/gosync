@@ -82,13 +82,17 @@ const (
 	flagCheckTimestamps = "check-timestamps"
 	flagThreads         = "threads"
 	flagPartSize        = "part-size"
+	//
+	flagExclude = "exclude"
 )
 
 // Sync Defaults
 const (
 	DefaultPoolSize = 1
 	DefaultLimit    = -1
-	DefaultPartSize = 1_048_576 * 100 // 100 MB
+	DefaultPartSize = 1_048_576 * 100 // 100 MiB
+
+	MinimumPartSize = 1_048_576 * 4 // 5 MiB
 )
 
 // Log Flags
@@ -131,6 +135,7 @@ func initSyncFlags(flag *pflag.FlagSet) {
 	flag.Int(flagMaxPages, -1, "maximum number of pages to return from the filesystem when reading a directory")
 	flag.Int(flagThreads, 1, "maximum number of parallel threads")
 	flag.Int(flagPartSize, DefaultPartSize, "size of parts when downloading")
+	flag.String(flagExclude, "", "source files to exclude, as a colon-separated list of filters, e.g, name, *name, name*, or *name*.")
 }
 
 func initLogFlags(flag *pflag.FlagSet) {
@@ -201,6 +206,9 @@ func checkConfig(v *viper.Viper, args []string) error {
 	}
 	if err := checkLogConfig(v, args); err != nil {
 		return fmt.Errorf("error with log configuration: %w", err)
+	}
+	if partSize := v.GetInt(flagPartSize); partSize < MinimumPartSize {
+		return fmt.Errorf("part size %d is less than the minimum part size %d", partSize, MinimumPartSize)
 	}
 	if threads := v.GetInt(flagThreads); threads == 0 {
 		return errors.New("threads cannot be zero")
@@ -481,6 +489,10 @@ func main() {
 				threads = runtime.NumCPU()
 			}
 			syncLimit := v.GetInt(flagSyncLimit)
+			syncExclude := []string{}
+			if syncExcludeString := v.GetString(flagExclude); len(syncExcludeString) > 0 {
+				syncExclude = strings.Split(syncExcludeString, ":")
+			}
 
 			bucketKeyEnabled := v.GetBool(flagBucketKeyEnabled)
 
@@ -528,6 +540,7 @@ func main() {
 				count, err := fileSystem.Sync(ctx, &fs.SyncInput{
 					Source:          sourceRelative,
 					Destination:     destinationRelative,
+					Exclude:         syncExclude,
 					Parents:         true,
 					CheckTimestamps: false,
 					Limit:           syncLimit,
@@ -613,6 +626,7 @@ func main() {
 				count, err := fileSystem.Sync(ctx, &fs.SyncInput{
 					Source:          sourceRelative,
 					Destination:     destinationRelative,
+					Exclude:         syncExclude,
 					Parents:         true,
 					CheckTimestamps: checkTimestamps,
 					Limit:           syncLimit,
@@ -676,6 +690,7 @@ func main() {
 				SourceFileSystem:      sourceFileSystem,
 				Destination:           "/",
 				DestinationFileSystem: destinationFileSystem,
+				Exclude:               syncExclude,
 				Parents:               true,
 				CheckTimestamps:       checkTimestamps,
 				Limit:                 syncLimit,

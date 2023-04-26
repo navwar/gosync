@@ -8,12 +8,13 @@
 package fs
 
 type SyncDirectoryInput struct {
-	SourceDirectory       string
-	SourceFileSystem      FileSystem
+	CheckTimestamps       bool
 	DestinationDirectory  string
 	DestinationFileSystem FileSystem
-	CheckTimestamps       bool
+	Exclude               []string
 	Limit                 int
 	Logger                Logger
 	MaxThreads            int
+	SourceDirectory       string
+	SourceFileSystem      FileSystem
 }

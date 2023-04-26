@@ -23,7 +23,9 @@ type MultipartUpload struct {
 	bucket           *string
 	bucketKeyEnabled bool
 	key              *string
+	partSize         int
 	//
+	buffer         *bytes.Buffer
 	uploadId       *string
 	lastPartNumber int32
 	etags          map[int32]*string
@@ -41,8 +43,33 @@ func (mu *MultipartUpload) Close() error {
 		return nil
 	}
 
-	completedParts := []types.CompletedPart{}
+	// upload remaining bytes
+	if mu.buffer.Len() > 0 {
+		partNumber := mu.lastPartNumber + 1
+		uploadPartOutput, err := mu.client.UploadPart(mu.ctx, &s3.UploadPartInput{
+			Body:          mu.buffer, // pass in buffer
+			Bucket:        mu.bucket,
+			Key:           mu.key,
+			PartNumber:    partNumber,
+			UploadId:      mu.uploadId,
+			ContentLength: int64(mu.buffer.Len()),
+		})
+		if err != nil {
+			return err
+		}
 
+		// save etag
+		mu.etags[partNumber] = uploadPartOutput.ETag
+
+		// incremeent part number
+		mu.lastPartNumber = partNumber
+
+		// reset buffer
+		mu.buffer = bytes.NewBuffer([]byte{})
+	}
+
+	// build list of completed parts
+	completedParts := []types.CompletedPart{}
 	for i := int32(1); i <= mu.lastPartNumber; i++ {
 		completedParts = append(completedParts, types.CompletedPart{
 			ETag:       mu.etags[i],
@@ -50,6 +77,7 @@ func (mu *MultipartUpload) Close() error {
 		})
 	}
 
+	// complete multipart upload
 	_, err := mu.client.CompleteMultipartUpload(mu.ctx, &s3.CompleteMultipartUploadInput{
 		Bucket:   mu.bucket,
 		Key:      mu.key,
@@ -61,6 +89,7 @@ func (mu *MultipartUpload) Close() error {
 	if err != nil {
 		return err
 	}
+	// return
 	return nil
 }
 
@@ -83,40 +112,54 @@ func (mu *MultipartUpload) Write(p []byte) (int, error) {
 		mu.bucket = createMultipartUploadOutput.Bucket
 		mu.key = createMultipartUploadOutput.Key
 		mu.uploadId = createMultipartUploadOutput.UploadId
+		mu.buffer = bytes.NewBuffer([]byte{})
 	}
 
-	partNumber := mu.lastPartNumber + 1
-
-	uploadPartOutput, err := mu.client.UploadPart(mu.ctx, &s3.UploadPartInput{
-		Body:          bytes.NewReader(p),
-		Bucket:        mu.bucket,
-		Key:           mu.key,
-		PartNumber:    partNumber,
-		UploadId:      mu.uploadId,
-		ContentLength: int64(len(p)),
-	})
+	// write to internal buffer
+	n, err := mu.buffer.Write(p)
 	if err != nil {
 		return 0, err
 	}
 
-	// save etag
-	mu.etags[partNumber] = uploadPartOutput.ETag
+	// check if buffer is greater than part size
+	if mu.buffer.Len() >= mu.partSize {
+		partNumber := mu.lastPartNumber + 1
+		uploadPartOutput, err := mu.client.UploadPart(mu.ctx, &s3.UploadPartInput{
+			Body:          mu.buffer, // pass in buffer
+			Bucket:        mu.bucket,
+			Key:           mu.key,
+			PartNumber:    partNumber,
+			UploadId:      mu.uploadId,
+			ContentLength: int64(mu.buffer.Len()),
+		})
+		if err != nil {
+			return 0, err
+		}
 
-	// incremeent part number
-	mu.lastPartNumber = partNumber
+		// save etag
+		mu.etags[partNumber] = uploadPartOutput.ETag
+
+		// incremeent part number
+		mu.lastPartNumber = partNumber
+
+		// reset buffer
+		mu.buffer = bytes.NewBuffer([]byte{})
+	}
 
 	// return number of bytes written
-	return len(p), nil
+	return n, nil
 }
 
-func NewMultipartUpload(ctx context.Context, client *s3.Client, bucket string, bucketKeyEnabled bool, key string) *MultipartUpload {
+func NewMultipartUpload(ctx context.Context, client *s3.Client, bucket string, bucketKeyEnabled bool, key string, partSize int) *MultipartUpload {
 	return &MultipartUpload{
 		client:           client,
 		ctx:              ctx,
 		bucket:           aws.String(bucket),
 		bucketKeyEnabled: bucketKeyEnabled,
 		key:              aws.String(key),
+		partSize:         partSize,
 		//
+		buffer:         nil,
 		uploadId:       nil,
 		lastPartNumber: int32(0),
 		etags:          map[int32]*string{},

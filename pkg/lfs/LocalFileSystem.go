@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/afero"
@@ -180,6 +181,51 @@ func (lfs *LocalFileSystem) Stat(ctx context.Context, name string) (fs.FileInfo,
 }
 
 func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirectoryInput) (int, error) {
+	// limit is zero
+	if input.Limit == 0 {
+		return 0, nil
+	}
+
+	skip := false
+	if len(input.Exclude) > 0 {
+		for _, exclude := range input.Exclude {
+			if strings.HasPrefix(exclude, "*") {
+				if strings.HasSuffix(exclude, "*") {
+					if strings.Contains(input.SourceDirectory, exclude[1:len(exclude)-1]) {
+						skip = true
+						break
+					}
+				} else {
+					if strings.HasSuffix(input.SourceDirectory, exclude[1:len(exclude)]) {
+						skip = true
+						break
+					}
+				}
+			} else {
+				if strings.HasSuffix(exclude, "*") {
+					if strings.HasPrefix(input.SourceDirectory, exclude[0:len(exclude)-1]) {
+						skip = true
+						break
+					}
+				} else {
+					if input.SourceDirectory == exclude {
+						skip = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if skip {
+		if input.Logger != nil {
+			input.Logger.Log("Skipping directory", map[string]interface{}{
+				"src": input.SourceDirectory,
+			})
+		}
+		return 0, nil
+	}
+
 	sourceDirectoryEntries, err := lfs.ReadDir(ctx, input.SourceDirectory)
 	if err != nil {
 		return 0, fmt.Errorf("error reading source directory %q: %w", input.SourceDirectory, err)
@@ -222,45 +268,84 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDir
 			}
 			count += c
 		} else {
-			count += 1
-			wg.Go(func() error {
-				copyFile := false
-				destinationFileInfo, err := lfs.Stat(ctx, destinationName)
-				if err != nil {
-					if lfs.IsNotExist(err) {
-						copyFile = true
+			// check if file should be skipped
+			skip := false
+			if len(input.Exclude) > 0 {
+				for _, exclude := range input.Exclude {
+					if strings.HasPrefix(exclude, "*") {
+						if strings.HasSuffix(exclude, "*") {
+							if strings.Contains(sourceName, exclude[1:len(exclude)-1]) {
+								skip = true
+								break
+							}
+						} else {
+							if strings.HasSuffix(sourceName, exclude[1:len(exclude)]) {
+								skip = true
+								break
+							}
+						}
 					} else {
-						return fmt.Errorf("error stating destination %q: %w", destinationName, err)
-					}
-				} else {
-					if sourceDirectoryEntry.Size() != destinationFileInfo.Size() {
-						copyFile = true
-					}
-					if input.CheckTimestamps {
-						if !sourceDirectoryEntry.ModTime().Equal(destinationFileInfo.ModTime()) {
-							copyFile = true
+						if strings.HasSuffix(exclude, "*") {
+							if strings.HasPrefix(sourceName, exclude[0:len(exclude)-1]) {
+								skip = true
+								break
+							}
+						} else {
+							if sourceName == exclude {
+								skip = true
+								break
+							}
 						}
 					}
 				}
-				if copyFile {
-					err := lfs.Copy(context.Background(), &fs.CopyInput{
-						SourceName:      sourceName,
-						DestinationName: destinationName,
-						Parents:         true,
-						Logger:          input.Logger,
+			}
+			if skip {
+				if input.Logger != nil {
+					input.Logger.Log("Skipping file", map[string]interface{}{
+						"src": sourceName,
 					})
-					if err != nil {
-						return fmt.Errorf("error copying %q to %q: %w", sourceName, destinationName, err)
-					}
-				} else {
-					if input.Logger != nil {
-						input.Logger.Log("Skipping file", map[string]interface{}{
-							"src": sourceName,
-						})
-					}
 				}
-				return nil
-			})
+			} else {
+				count += 1
+				wg.Go(func() error {
+					copyFile := false
+					destinationFileInfo, err := lfs.Stat(ctx, destinationName)
+					if err != nil {
+						if lfs.IsNotExist(err) {
+							copyFile = true
+						} else {
+							return fmt.Errorf("error stating destination %q: %w", destinationName, err)
+						}
+					} else {
+						if sourceDirectoryEntry.Size() != destinationFileInfo.Size() {
+							copyFile = true
+						}
+						if input.CheckTimestamps {
+							if !sourceDirectoryEntry.ModTime().Equal(destinationFileInfo.ModTime()) {
+								copyFile = true
+							}
+						}
+					}
+					if copyFile {
+						err := lfs.Copy(context.Background(), &fs.CopyInput{
+							SourceName:      sourceName,
+							DestinationName: destinationName,
+							Parents:         true,
+							Logger:          input.Logger,
+						})
+						if err != nil {
+							return fmt.Errorf("error copying %q to %q: %w", sourceName, destinationName, err)
+						}
+					} else {
+						if input.Logger != nil {
+							input.Logger.Log("Skipping file", map[string]interface{}{
+								"src": sourceName,
+							})
+						}
+					}
+					return nil
+				})
+			}
 		}
 		// break if count is greater than or at the limit
 		if input.Limit != -1 && count >= input.Limit {
@@ -284,7 +369,48 @@ func (lfs *LocalFileSystem) Sync(ctx context.Context, input *fs.SyncInput) (int,
 			"src":     input.Source,
 			"dst":     input.Destination,
 			"threads": input.MaxThreads,
+			"exclude": input.Exclude,
 		})
+	}
+
+	skip := false
+	if len(input.Exclude) > 0 {
+		for _, exclude := range input.Exclude {
+			if strings.HasPrefix(exclude, "*") {
+				if strings.HasSuffix(exclude, "*") {
+					if strings.Contains(input.Source, exclude[1:len(exclude)-1]) {
+						skip = true
+						break
+					}
+				} else {
+					if strings.HasSuffix(input.Source, exclude[1:len(exclude)]) {
+						skip = true
+						break
+					}
+				}
+			} else {
+				if strings.HasSuffix(exclude, "*") {
+					if strings.HasPrefix(input.Source, exclude[0:len(exclude)-1]) {
+						skip = true
+						break
+					}
+				} else {
+					if input.Source == exclude {
+						skip = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if skip {
+		if input.Logger != nil {
+			input.Logger.Log("Skipping source", map[string]interface{}{
+				"src": input.Source,
+			})
+		}
+		return 0, nil
 	}
 
 	sourceFileInfo, err := lfs.Stat(ctx, input.Source)
@@ -305,12 +431,13 @@ func (lfs *LocalFileSystem) Sync(ctx context.Context, input *fs.SyncInput) (int,
 			}
 		}
 		count, err := lfs.SyncDirectory(ctx, &fs.SyncDirectoryInput{
-			SourceDirectory:      input.Source,
-			DestinationDirectory: input.Destination,
 			CheckTimestamps:      input.CheckTimestamps,
+			DestinationDirectory: input.Destination,
+			Exclude:              input.Exclude,
 			Limit:                input.Limit,
 			Logger:               input.Logger,
 			MaxThreads:           input.MaxThreads,
+			SourceDirectory:      input.Source,
 		})
 		if err != nil {
 			return 0, fmt.Errorf("error syncing source directory %q to destination directory %q: %w", input.Source, input.Destination, err)

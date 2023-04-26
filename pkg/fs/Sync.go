@@ -10,6 +10,7 @@ package fs
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -20,7 +21,48 @@ func Sync(ctx context.Context, input *SyncInput) (int, error) {
 			"src":     input.Source,
 			"dst":     input.Destination,
 			"threads": input.MaxThreads,
+			"exclude": input.Exclude,
 		})
+	}
+
+	skip := false
+	if len(input.Exclude) > 0 {
+		for _, exclude := range input.Exclude {
+			if strings.HasPrefix(exclude, "*") {
+				if strings.HasSuffix(exclude, "*") {
+					if strings.Contains(input.Source, exclude[1:len(exclude)-1]) {
+						skip = true
+						break
+					}
+				} else {
+					if strings.HasSuffix(input.Source, exclude[1:len(exclude)]) {
+						skip = true
+						break
+					}
+				}
+			} else {
+				if strings.HasSuffix(exclude, "*") {
+					if strings.HasPrefix(input.Source, exclude[0:len(exclude)-1]) {
+						skip = true
+						break
+					}
+				} else {
+					if input.Source == exclude {
+						skip = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if skip {
+		if input.Logger != nil {
+			input.Logger.Log("Skipping source", map[string]interface{}{
+				"src": input.Source,
+			})
+		}
+		return 0, nil
 	}
 
 	sourceFileInfo, err := input.SourceFileSystem.Stat(ctx, input.Source)
@@ -41,11 +83,12 @@ func Sync(ctx context.Context, input *SyncInput) (int, error) {
 			}
 		}
 		count, err := SyncDirectory(ctx, &SyncDirectoryInput{
+			CheckTimestamps:       input.CheckTimestamps,
 			SourceDirectory:       input.Source,
 			SourceFileSystem:      input.SourceFileSystem,
 			DestinationDirectory:  input.Destination,
 			DestinationFileSystem: input.DestinationFileSystem,
-			CheckTimestamps:       input.CheckTimestamps,
+			Exclude:               input.Exclude,
 			Limit:                 input.Limit,
 			Logger:                input.Logger,
 			MaxThreads:            input.MaxThreads,
@@ -97,6 +140,12 @@ func Sync(ctx context.Context, input *SyncInput) (int, error) {
 			return 0, fmt.Errorf("error copying %q to %q: %w", input.Source, input.Destination, err)
 		}
 		return 1, nil
+	} else {
+		if input.Logger != nil {
+			input.Logger.Log("Skipping file", map[string]interface{}{
+				"src": input.Source,
+			})
+		}
 	}
 
 	return 0, nil
