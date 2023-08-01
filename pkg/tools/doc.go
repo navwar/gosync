@@ -1,0 +1,9 @@
+// ==================================================================================
+//
+// Work of the U.S. Department of the Navy, Naval Information Warfare Center Pacific.
+// Released as open source under the MIT License.  See LICENSE file.
+//
+// ==================================================================================
+
+// Package tools inclues developer tools.
+package tools

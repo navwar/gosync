@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# ==================================================================================
+#
+# Work of the U.S. Department of the Navy, Naval Information Warfare Center Pacific.
+# Released as open source under the MIT License.  See LICENSE file.
+#
+# ==================================================================================
+
+set -euo pipefail
+
+function usage() {
+  echo "Usage: ${0##*/} HEADER_FILE DIR [DIR ...]"
+  exit 1
+}
+
+if [[ "$#" -lt 2 ]]; then
+  usage
+fi
+
+header_file=$1
+
+header=$(cat "${header_file}")
+
+echo "Using header"
+echo ""
+echo "${header}"
+echo ""
+
+header_base64=$(echo -e "${header}" | base64)
+
+exit_code=0
+for dir in ${@:2}; do
+  files=($(find "${dir}" -type f -name "*.go" | xargs -I {} realpath {} | sort))
+  for file in "${files[@]}"; do
+    if [[ "${file}" == "" ]]; then
+      continue
+    fi
+    file_header_base64=$(head -n 6 "${file}" | base64)
+    if [[ "${file_header_base64}" != "${header_base64}" ]]; then
+      echo "${file}"
+      exit_code=1
+    fi
+  done
+done
+
+if [[ $exit_code -ne 0 ]]; then
+  exit "${exit_code}"
+fi
