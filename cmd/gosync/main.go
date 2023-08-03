@@ -315,20 +315,6 @@ func initS3Client(ctx context.Context, v *viper.Viper, profile string, partition
 		Logger:           log.NewClientLogger(os.Stdout),
 	}
 
-	if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
-		c.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(func(service string, region string, options ...interface{}) (aws.Endpoint, error) {
-			if service == s3.ServiceID {
-				endpoint := aws.Endpoint{
-					PartitionID:   partition,
-					URL:           e,
-					SigningRegion: region,
-				}
-				return endpoint, nil
-			}
-			return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-		})
-	}
-
 	if len(accessKeyID) > 0 && len(secretAccessKey) > 0 {
 		c.Credentials = credentials.NewStaticCredentialsProvider(
 			accessKeyID,
@@ -357,6 +343,9 @@ func initS3Client(ctx context.Context, v *viper.Viper, profile string, partition
 
 	client := s3.NewFromConfig(c, func(o *s3.Options) {
 		o.UsePathStyle = usePathStyle
+		if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
+			o.BaseEndpoint = aws.String(e)
+		}
 	})
 
 	return client
@@ -552,7 +541,7 @@ func main() {
 			"gosync is a simple command line program for synchronizing two directories specified by URI.",
 			"gosync schemes returns the currently supported schemes.",
 			"Local files are specified using the \"file://\" scheme or a path without a scheme.",
-			"S3 files are specified using the \"s3://\" scheme or a path without a scheme.",
+			"S3 files are specified using the \"s3://\" scheme.",
 		}, "\n"),
 	}
 
