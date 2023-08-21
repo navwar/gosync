@@ -584,6 +584,8 @@ func main() {
 				return errConfig
 			}
 
+			debug := v.GetBool(flagDebug)
+
 			logger, err := initLogger(v.GetString(flagLogPath), v.GetString(flagLogPerm))
 			if err != nil {
 				return fmt.Errorf("error initializing logger: %w", err)
@@ -639,9 +641,15 @@ func main() {
 			}
 
 			// create file system
-			_ = logger.Log("Creating filesystem", map[string]interface{}{
-				"root": uri,
-			})
+			if debug {
+				fields := map[string]interface{}{
+					"root": uri,
+				}
+				if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
+					fields["endpoint"] = e
+				}
+				_ = logger.Log("Creating filesystem", fields)
+			}
 
 			fs := initFileSystem(
 				ctx,
@@ -886,6 +894,8 @@ func main() {
 				return errConfig
 			}
 
+			debug := v.GetBool(flagDebug)
+
 			logger, err := initLogger(v.GetString(flagLogPath), v.GetString(flagLogPerm))
 			if err != nil {
 				return fmt.Errorf("error initializing logger: %w", err)
@@ -976,9 +986,15 @@ func main() {
 				}
 
 				// create file system
-				_ = logger.Log("Creating shared filesystem", map[string]interface{}{
-					"root": root,
-				})
+				if debug {
+					fields := map[string]interface{}{
+						"root": root,
+					}
+					if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
+						fields["endpoint"] = e
+					}
+					_ = logger.Log("Creating shared filesystem", fields)
+				}
 
 				fileSystem := initFileSystem(
 					ctx,
@@ -1070,10 +1086,16 @@ func main() {
 				sourceRelative := filepath.Join(sourceDirectories...)[len(root):]
 				destinationRelative := filepath.Join(destinationDirectories...)[len(root):]
 
-				// Create file system
-				_ = logger.Log("Creating shared filesystem", map[string]interface{}{
-					"root": root,
-				})
+				// create file system
+				if debug {
+					fields := map[string]interface{}{
+						"root": root,
+					}
+					if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
+						fields["endpoint"] = e
+					}
+					_ = logger.Log("Creating shared filesystem", fields)
+				}
 
 				fileSystem := initFileSystem(
 					ctx,
@@ -1128,10 +1150,17 @@ func main() {
 				return nil
 			}
 
-			// Source File System
-			_ = logger.Log("Creating source filesystem", map[string]interface{}{
-				"uri": sourceURI,
-			})
+			// create source file system
+			if debug {
+				fields := map[string]interface{}{
+					"root": sourceURI,
+				}
+				if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
+					fields["endpoint"] = e
+				}
+				_ = logger.Log("Creating source filesystem", fields)
+			}
+
 			sourceBucket := ""
 			destinationBucket := ""
 			if sourceURI != "s3://" && strings.HasPrefix(sourceURI, "s3://") {
@@ -1154,10 +1183,16 @@ func main() {
 				"",
 			)
 
-			// Destination File System
-			_ = logger.Log("Creating destination filesystem", map[string]interface{}{
-				"uri": destinationURI,
-			})
+			// create destination file system
+			if debug {
+				fields := map[string]interface{}{
+					"root": destinationURI,
+				}
+				if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
+					fields["endpoint"] = e
+				}
+				_ = logger.Log("Creating destination filesystem", fields)
+			}
 
 			destinationFileSystem := initFileSystem(
 				ctx,
