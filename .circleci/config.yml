@@ -70,6 +70,7 @@ jobs:
       - run: make tidy
       - run: make bin/gosync
       - run: make test_cli
+      - run: make sync_example
 
   # `build` builds the executables
   build:
@@ -129,6 +130,8 @@ jobs:
           docker_layer_caching: false
       - run: make docker_build
       - run: make docker_version
+      - run: make docker_help
+      - run: make docker_sync_example
 
   # `verify_linux` verifys the linux build
   verify_linux:

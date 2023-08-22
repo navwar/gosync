@@ -1012,11 +1012,13 @@ func main() {
 				sourceRelative := sourceURI[len(root):]
 				destinationRelative := destinationURI[len(root):]
 
-				_ = logger.Log("Created shared filesystem", map[string]interface{}{
-					"root":        root,
-					"source":      sourceRelative,
-					"destination": destinationRelative,
-				})
+				if debug {
+					_ = logger.Log("Created shared filesystem", map[string]interface{}{
+						"root":        root,
+						"source":      sourceRelative,
+						"destination": destinationRelative,
+					})
+				}
 
 				//
 				// Synchronize
@@ -1088,13 +1090,9 @@ func main() {
 
 				// create file system
 				if debug {
-					fields := map[string]interface{}{
+					_ = logger.Log("Creating shared filesystem", map[string]interface{}{
 						"root": root,
-					}
-					if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
-						fields["endpoint"] = e
-					}
-					_ = logger.Log("Creating shared filesystem", fields)
+					})
 				}
 
 				fileSystem := initFileSystem(
@@ -1111,11 +1109,13 @@ func main() {
 					"",
 				)
 
-				_ = logger.Log("Created shared filesystem", map[string]interface{}{
-					"root":        root,
-					"source":      sourceRelative,
-					"destination": destinationRelative,
-				})
+				if debug {
+					_ = logger.Log("Created shared filesystem", map[string]interface{}{
+						"root":        root,
+						"source":      sourceRelative,
+						"destination": destinationRelative,
+					})
+				}
 
 				//
 				// Synchronize

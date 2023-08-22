@@ -21,6 +21,7 @@ fi
 header_file=$1
 
 header=$(cat "${header_file}")
+header_lines=$(cat "${header_file}" | wc -l)
 
 echo "Using header"
 echo ""
@@ -36,7 +37,7 @@ for dir in ${@:2}; do
     if [[ "${file}" == "" ]]; then
       continue
     fi
-    file_header_base64=$(head -n 6 "${file}" | base64)
+    file_header_base64=$(head -n "${header_lines}" "${file}" | base64)
     if [[ "${file_header_base64}" != "${header_base64}" ]]; then
       echo "${file}"
       exit_code=1
