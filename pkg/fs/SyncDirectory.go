@@ -93,6 +93,7 @@ func SyncDirectory(ctx context.Context, input *SyncDirectoryInput) (int, error) 
 		_ = input.Logger.Log("Synchronizing Directory", map[string]interface{}{
 			"delete":               input.Delete,
 			"dst":                  input.DestinationDirectory,
+			"exclude":              input.Exclude,
 			"files_at_destination": len(destinationDirectoryEntries),
 			"files_at_source":      len(sourceDirectoryEntries),
 			"src":                  input.SourceDirectory,

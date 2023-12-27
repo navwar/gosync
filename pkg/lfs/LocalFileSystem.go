@@ -396,6 +396,7 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDir
 		_ = input.Logger.Log("Synchronizing Directory", map[string]interface{}{
 			"delete":  input.Delete,
 			"dst":     input.DestinationDirectory,
+			"exclude": input.Exclude,
 			"files":   len(sourceDirectoryEntries),
 			"src":     input.SourceDirectory,
 			"threads": input.MaxThreads,
@@ -469,6 +470,7 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDir
 			c, err := lfs.SyncDirectory(ctx, &fs.SyncDirectoryInput{
 				CheckTimestamps:      input.CheckTimestamps,
 				DestinationDirectory: destinationName,
+				Exclude:              input.Exclude,
 				Limit:                directoryLimit,
 				Logger:               input.Logger,
 				MaxThreads:           input.MaxThreads,

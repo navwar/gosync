@@ -53,8 +53,8 @@ func (u *Uploader) Close() error {
 			ACL:              u.acl,
 			Body:             reader,
 			Bucket:           u.bucket,
-			BucketKeyEnabled: u.bucketKeyEnabled,
-			ContentLength:    int64(reader.Len()),
+			BucketKeyEnabled: aws.Bool(u.bucketKeyEnabled),
+			ContentLength:    aws.Int64(int64(reader.Len())),
 			Key:              u.key,
 		})
 		if err != nil {
@@ -80,9 +80,9 @@ func (u *Uploader) Close() error {
 			Body:          reader,
 			Bucket:        u.bucket,
 			Key:           u.key,
-			PartNumber:    partNumber,
+			PartNumber:    aws.Int32(partNumber),
 			UploadId:      u.uploadID,
-			ContentLength: int64(reader.Len()),
+			ContentLength: aws.Int64(int64(reader.Len())),
 		})
 		if err != nil {
 			return err
@@ -103,7 +103,7 @@ func (u *Uploader) Close() error {
 	for i := int32(1); i <= u.lastPartNumber; i++ {
 		completedParts = append(completedParts, types.CompletedPart{
 			ETag:       u.etags[i],
-			PartNumber: i,
+			PartNumber: aws.Int32(i),
 		})
 	}
 
@@ -142,7 +142,7 @@ func (u *Uploader) Write(p []byte) (int, error) {
 			createMultipartUploadOutput, err := u.client.CreateMultipartUpload(u.ctx, &s3.CreateMultipartUploadInput{
 				ACL:              types.ObjectCannedACLBucketOwnerFullControl,
 				Bucket:           u.bucket,
-				BucketKeyEnabled: u.bucketKeyEnabled,
+				BucketKeyEnabled: aws.Bool(u.bucketKeyEnabled),
 				Key:              u.key,
 			})
 			if err != nil {
@@ -153,13 +153,16 @@ func (u *Uploader) Write(p []byte) (int, error) {
 
 		// Upload Part
 		partNumber := u.lastPartNumber + 1
+		// Create a reader to allow the AWS Client to compute a payload hash
+		// https://aws.github.io/aws-sdk-go-v2/docs/sdk-utilities/s3/#unseekable-streaming-input
+		reader := bytes.NewReader(u.buffer.Bytes())
 		uploadPartOutput, err := u.client.UploadPart(u.ctx, &s3.UploadPartInput{
-			Body:          u.buffer, // pass in buffer
+			Body:          reader,
 			Bucket:        u.bucket,
 			Key:           u.key,
-			PartNumber:    partNumber,
+			PartNumber:    aws.Int32(partNumber),
 			UploadId:      u.uploadID,
-			ContentLength: int64(u.buffer.Len()),
+			ContentLength: aws.Int64(int64(u.buffer.Len())),
 		})
 		if err != nil {
 			return 0, err

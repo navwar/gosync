@@ -95,6 +95,7 @@ rebuild:  ## Rebuild binary
 # Local
 #
 
+.PHONY: sync_example
 sync_example: bin/gosync  ## Sync using local binary
 	# delete temp directory
 	rm -fr temp
@@ -113,12 +114,15 @@ sync_example: bin/gosync  ## Sync using local binary
 # Docker
 #
 
+.PHONY: docker_build
 docker_build: ## Build the docker image
 	docker build -f Dockerfile --tag gosync:latest .
 
+.PHONY: docker_help
 docker_help: ## Run the help command using docker image
 	docker run -it --rm gosync:latest help
 
+.PHONY: docker_sync_example
 docker_sync_example: ## Sync using docker image
 	# delete temp directory
 	rm -fr temp
@@ -133,8 +137,13 @@ docker_sync_example: ## Sync using docker image
 	/gosync/testdata \
 	/gosync/temp
 
+.PHONY: docker_version
 docker_version:  ## Run the version command using docker image
 	docker run -it --rm gosync:latest version
+
+.PHONY: minio_serve
+minio_serve:
+	minio server temp/minio
 
 ## Clean
 
