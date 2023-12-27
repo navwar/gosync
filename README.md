@@ -19,46 +19,60 @@ Usage:
   gosync sync SOURCE DESTINATION
 
 Flags:
-  -a, --all                                 Include directory entries whose names begin with a dot (‘.’).
-      --aws-access-key-id string            AWS Access Key ID
-      --aws-assume-role-duration duration   Expiry duration of the STS credentials for assuming a role. (default 15m0s)
-      --aws-bucket-key-enabled              bucket key enabled
-      --aws-default-region string           AWS Default Region
-      --aws-insecure-skip-verify            Skip verification of AWS TLS certificate
-      --aws-mfa-serial string               AWS MFA Serial
-      --aws-partition string                AWS Partition (default "aws")
-      --aws-profile string                  AWS Profile (default "default")
-      --aws-region string                   AWS Region (overrides default region)
-      --aws-retry-max-attempts int          the maximum number attempts an AWS API client will call an operation that fails with a retryable error. (default 5)
-      --aws-role-arn string                 AWS Role ARN
-      --aws-s3-endpoint string              AWS S3 Endpoint URL
-      --aws-s3-use-path-style               Use path-style addressing (default is to use virtual-host-style addressing)
-      --aws-secret-access-key string        AWS Secret Access Key
-      --aws-session-token string            AWS Session Token
-      --check-timestamps                    check timestamps are equal
-  -d, --debug                               print debug messages
-      --delete                              delete files at destination that do not exist at source
-  -e, --exclude string                      a colon-separated list of paths to exclude with support for wildcards, e.g, path, *path, path*, or *path*.
-  -h, --help                                help for sync
-      --human-readable-file-size            display file sizes in human-readable format
-      --limit int                           limit number of files copied (default -1)
-      --log-client-requests                 log AWS client requests
-      --log-client-responses                log AWS client responses
-      --log-client-retries                  log AWS client retries
-      --log-client-signing                  log AWS client signature requests
-  -f, --log-format string                   output log format.  Either jsonl or text. (default "text")
-      --log-path string                     path to the log output.  Defaults to the operating system's stdout device. (default "-")
-      --log-perm string                     file permissions for log output file as unix file mode. (default "0600")
-      --magic-number                        include magic number in output as hex
-      --max-directory-entries int           maximum directory entries for each page returned by the filesystem (default -1)
-      --max-pages int                       maximum number of pages to return from the filesystem when reading a directory (default -1)
-  -p, --parents                             create parent directories for destination if they do not exist
-      --part-size int                       size of parts in bytes when transferring to S3 (minimum 4194304) (default 104857600)
-  -r, --recursive                           recursively list sub-directories breadth-first
-      --threads int                         maximum number of parallel threads (default 1)
-  -t, --time-layout string                  the layout to use for file timestamps.  Use go layout format, or the name of a layout.  Use gosync layouts to show all named layouts. (default "Default")
-  -z, --time-zone string                    the timezone to use for file timestamps (default "Local")
-      --timestamp-precision duration        precision to use when checking timestamps (default 1s)
+  -a, --all                                        Include directory entries whose names begin with a dot (‘.’).
+      --aws-access-key-id string                   AWS Access Key ID
+      --aws-assume-role-duration duration          Expiry duration of the STS credentials for assuming a role. (default 15m0s)
+      --aws-bucket-key-enabled                     bucket key enabled
+      --aws-default-region string                  AWS Default Region
+      --aws-insecure-skip-verify                   Skip verification of AWS TLS certificate
+      --aws-mfa-serial string                      AWS MFA Serial
+      --aws-partition string                       AWS Partition (default "aws")
+      --aws-profile string                         AWS Profile (default "default")
+      --aws-region string                          AWS Region (overrides default region)
+      --aws-retry-max-attempts int                 the maximum number attempts an AWS API client will call an operation that fails with a retryable error. (default 5)
+      --aws-role-arn string                        AWS Role ARN
+      --aws-s3-endpoint string                     AWS S3 Endpoint URL
+      --aws-s3-use-path-style                      Use path-style addressing (default is to use virtual-host-style addressing)
+      --aws-secret-access-key string               AWS Secret Access Key
+      --aws-session-token string                   AWS Session Token
+      --check-timestamps                           check timestamps are equal
+  -d, --debug                                      print debug messages
+      --delete                                     delete files at destination that do not exist at source
+      --destination-aws-access-key-id string       AWS Access Key ID for destination
+      --destination-aws-profile string             AWS Profile for destination (default "default")
+      --destination-aws-region string              AWS Region for destination
+      --destination-aws-s3-endpoint string         AWS S3 Endpoint URL for destination
+      --destination-aws-s3-use-path-style          Use path-style addressing (default is to use virtual-host-style addressing) for destination
+      --destination-aws-secret-access-key string   AWS Secret Access Key for destination
+      --destination-aws-session-token string       AWS Session Token for destination
+  -e, --exclude string                             a colon-separated list of paths to exclude with support for wildcards, e.g, path, *path, path*, or *path*.
+  -h, --help                                       help for sync
+      --human-readable-file-size                   display file sizes in human-readable format
+      --limit int                                  limit number of files copied (default -1)
+      --log-client-requests                        log AWS client requests
+      --log-client-responses                       log AWS client responses
+      --log-client-retries                         log AWS client retries
+      --log-client-signing                         log AWS client signature requests
+  -f, --log-format string                          output log format.  Either jsonl or text. (default "text")
+      --log-path string                            path to the log output.  Defaults to the operating system's stdout device. (default "-")
+      --log-perm string                            file permissions for log output file as unix file mode. (default "0600")
+      --magic-number                               include magic number in output as hex
+      --max-directory-entries int                  maximum directory entries for each page returned by the filesystem (default -1)
+      --max-pages int                              maximum number of pages to return from the filesystem when reading a directory (default -1)
+  -p, --parents                                    create parent directories for destination if they do not exist
+      --part-size int                              size of parts in bytes when transferring to S3 (minimum 4194304) (default 104857600)
+  -r, --recursive                                  recursively list sub-directories breadth-first
+      --source-aws-access-key-id string            AWS Access Key ID for source
+      --source-aws-profile string                  AWS Profile for source (default "default")
+      --source-aws-region string                   AWS Region for source
+      --source-aws-s3-endpoint string              AWS S3 Endpoint URL for source
+      --source-aws-s3-use-path-style               Use path-style addressing (default is to use virtual-host-style addressing) for source
+      --source-aws-secret-access-key string        AWS Secret Access Key for source
+      --source-aws-session-token string            AWS Session Token for source
+      --threads int                                maximum number of parallel threads (default 1)
+  -t, --time-layout string                         the layout to use for file timestamps.  Use go layout format, or the name of a layout.  Use gosync layouts to show all named layouts. (default "Default")
+  -z, --time-zone string                           the timezone to use for file timestamps (default "Local")
+      --timestamp-precision duration               precision to use when checking timestamps (default 1s)
 ```
 
 ## Examples
