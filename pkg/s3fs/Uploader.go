@@ -35,6 +35,7 @@ type Uploader struct {
 }
 
 func (u *Uploader) Close() error {
+
 	if u.closed {
 		return io.ErrUnexpectedEOF
 	}
@@ -48,13 +49,14 @@ func (u *Uploader) Close() error {
 		// the reader to the beginning if the first attempt failed
 		// and the client retries
 		reader := bytes.NewReader(u.buffer.Bytes())
+		contentLength := aws.Int64(int64(reader.Len()))
 		// put the object
 		_, err := u.client.PutObject(u.ctx, &s3.PutObjectInput{
 			ACL:              u.acl,
 			Body:             reader,
 			Bucket:           u.bucket,
 			BucketKeyEnabled: aws.Bool(u.bucketKeyEnabled),
-			ContentLength:    aws.Int64(int64(reader.Len())),
+			ContentLength:    contentLength,
 			Key:              u.key,
 		})
 		if err != nil {
@@ -155,6 +157,7 @@ func (u *Uploader) Write(p []byte) (int, error) {
 		partNumber := u.lastPartNumber + 1
 		// Create a reader to allow the AWS Client to compute a payload hash
 		// https://aws.github.io/aws-sdk-go-v2/docs/sdk-utilities/s3/#unseekable-streaming-input
+		contentLength := aws.Int64(int64(u.buffer.Len()))
 		reader := bytes.NewReader(u.buffer.Bytes())
 		uploadPartOutput, err := u.client.UploadPart(u.ctx, &s3.UploadPartInput{
 			Body:          reader,
@@ -162,7 +165,7 @@ func (u *Uploader) Write(p []byte) (int, error) {
 			Key:           u.key,
 			PartNumber:    aws.Int32(partNumber),
 			UploadId:      u.uploadID,
-			ContentLength: aws.Int64(int64(u.buffer.Len())),
+			ContentLength: contentLength,
 		})
 		if err != nil {
 			return 0, err

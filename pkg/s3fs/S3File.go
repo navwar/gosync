@@ -9,7 +9,6 @@ package s3fs
 
 import (
 	"context"
-	"errors"
 	"io"
 
 	"github.com/navwar/gosync/pkg/fs"
@@ -47,16 +46,18 @@ func (f *S3File) Write(p []byte) (n int, err error) {
 	if f.writeCloser != nil {
 		return f.writeCloser.Write(p)
 	}
-	return 0, nil
+	return 0, io.ErrUnexpectedEOF
 }
 
-func (f *S3File) WriteAt(s []byte, o int64) (int, error) {
+/*func (f *S3File) WriteAt(s []byte, o int64) (int, error) {
 	return 0, errors.New("S3File does not support the WriteAt function")
-}
+}*/
 
 func (f *S3File) WriteTo(ctx context.Context, w fs.Writer) (int64, error) {
 	if f.downloader != nil {
-		return f.downloader(ctx, w)
+		if wa, ok := w.(fs.WriterAt); ok {
+			return f.downloader(ctx, wa)
+		}
 	}
 	return io.Copy(w, f.readSeeker)
 }

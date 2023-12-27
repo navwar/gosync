@@ -12,10 +12,9 @@ import (
 	"io"
 )
 
-type File interface {
+type Object interface {
 	io.ReadSeekCloser
 	io.WriteCloser
-	io.WriterAt
 	Name() string
 	WriteTo(ctx context.Context, w Writer) (int64, error)
 }

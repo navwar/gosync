@@ -65,7 +65,7 @@ func Copy(ctx context.Context, input *CopyInput) error {
 	}
 
 	// open destination file
-	destinationFile, err := input.DestinationFileSystem.OpenFile(ctx, input.DestinationName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+	destinationFile, err := input.DestinationFileSystem.OpenObject(ctx, input.DestinationName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		_ = sourceFile.Close() // silently close source file
 		return fmt.Errorf("error creating destination file at %q: %w", input.SourceName, err)

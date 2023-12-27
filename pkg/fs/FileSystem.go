@@ -23,8 +23,8 @@ type FileSystem interface {
 	MagicNumbers(ctx context.Context, names []string, threads int) ([][]byte, error)
 	MkdirAll(ctx context.Context, name string, mode os.FileMode) error
 	MustRelative(ctx context.Context, basepath string, targetpath string) string
-	Open(ctx context.Context, name string) (File, error)
-	OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (File, error)
+	Open(ctx context.Context, name string) (Object, error)
+	OpenObject(ctx context.Context, name string, flag int, perm os.FileMode) (Object, error)
 	Relative(ctx context.Context, basepath string, targetpath string) (string, error)
 	ReadDir(ctx context.Context, name string, recursive bool) ([]DirectoryEntryInterface, error)
 	ReadFile(ctx context.Context, name string, p []byte) (n int, err error) // open up a file and read the contents

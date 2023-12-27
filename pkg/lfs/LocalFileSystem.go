@@ -172,7 +172,7 @@ func (lfs *LocalFileSystem) MustRelative(ctx context.Context, base string, targe
 	return relpath
 }
 
-func (lfs *LocalFileSystem) Open(ctx context.Context, name string) (fs.File, error) {
+func (lfs *LocalFileSystem) Open(ctx context.Context, name string) (fs.Object, error) {
 	f, err := lfs.fs.Open(name)
 	if err != nil {
 		return nil, err
@@ -181,6 +181,14 @@ func (lfs *LocalFileSystem) Open(ctx context.Context, name string) (fs.File, err
 }
 
 func (lfs *LocalFileSystem) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (fs.File, error) {
+	f, err := lfs.fs.OpenFile(name, flag, perm)
+	if err != nil {
+		return nil, err
+	}
+	return NewLocalFile(f), nil
+}
+
+func (lfs *LocalFileSystem) OpenObject(ctx context.Context, name string, flag int, perm os.FileMode) (fs.Object, error) {
 	f, err := lfs.fs.OpenFile(name, flag, perm)
 	if err != nil {
 		return nil, err

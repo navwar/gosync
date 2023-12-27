@@ -829,7 +829,7 @@ func (s3fs *S3FileSystem) Stat(ctx context.Context, name string) (fs.FileInfo, e
 	return fi, nil
 }
 
-func (s3fs *S3FileSystem) Open(ctx context.Context, name string) (fs.File, error) {
+func (s3fs *S3FileSystem) Open(ctx context.Context, name string) (fs.Object, error) {
 	size, sizeError := s3fs.Size(ctx, name)
 	if sizeError != nil {
 		return nil, sizeError
@@ -936,7 +936,7 @@ func (s3fs *S3FileSystem) Open(ctx context.Context, name string) (fs.File, error
 	return NewS3File(name, readSeeker, downloader, nil), nil
 }
 
-func (s3fs *S3FileSystem) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (fs.File, error) {
+func (s3fs *S3FileSystem) OpenObject(ctx context.Context, name string, flag int, perm os.FileMode) (fs.Object, error) {
 	doesNotExist := false
 	size, sizeError := s3fs.Size(ctx, name)
 	if sizeError != nil {
@@ -965,6 +965,7 @@ func (s3fs *S3FileSystem) OpenFile(ctx context.Context, name string, flag int, p
 			0,
 			size,
 			func(offset int64, p []byte) (int, error) {
+				fmt.Println("client.GetObject:", bucket, key, offset)
 				getObjectOutput, err := client.GetObject(ctx, &s3.GetObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),

@@ -8,14 +8,10 @@
 package fs
 
 import (
-	"context"
 	"io"
 )
 
-type File interface {
-	io.ReadSeekCloser
-	io.WriteCloser
+type WriterAt interface {
+	Writer
 	io.WriterAt
-	Name() string
-	WriteTo(ctx context.Context, w Writer) (int64, error)
 }
