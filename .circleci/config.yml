@@ -13,7 +13,6 @@ executors:
   ubuntu_amd64:
     machine:
       image: ubuntu-2204:2023.10.1
-    resource_class: amd64.medium
 
   # `ubuntu_arm` uses an ARM machine image.
   ubuntu_arm:
