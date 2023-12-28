@@ -1,5 +1,5 @@
 # build stage
-FROM golang:1.20-alpine3.17 AS builder
+FROM golang:1.21-alpine3.19 AS builder
 
 RUN apk update && apk add --no-cache git make gcc g++ ca-certificates && update-ca-certificates
 
@@ -16,7 +16,7 @@ RUN rm -f bin/gox bin/gosync_linux_amd64 && make bin/gox && bin/gox \
 github.com/navwar/gosync/cmd/gosync
 
 # final stage
-FROM alpine:3.17
+FROM alpine:3.19
 
 RUN apk update && apk add --no-cache ca-certificates && update-ca-certificates
 
