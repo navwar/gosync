@@ -1079,7 +1079,7 @@ func main() {
 
 			sourceProfile := v.GetString(flagSourceAWSProfile)
 			if len(sourceProfile) == 0 {
-				sourceProfile := v.GetString(flagAWSProfile)
+				sourceProfile = v.GetString(flagAWSProfile)
 				if len(sourceProfile) == 0 {
 					sourceProfile = "default"
 				}
@@ -1087,7 +1087,7 @@ func main() {
 
 			destinationProfile := v.GetString(flagDestinationAWSProfile)
 			if len(destinationProfile) == 0 {
-				destinationProfile := v.GetString(flagAWSProfile)
+				destinationProfile = v.GetString(flagAWSProfile)
 				if len(destinationProfile) == 0 {
 					destinationProfile = "default"
 				}
