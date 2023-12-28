@@ -20,15 +20,15 @@ executors:
     docker:
       - image: cimg/base:2023.02
 
-  # `main` uses the `cimg/go:1.20` docker image.
+  # `main` uses the `cimg/go:1.21` docker image.
   main:
     docker:
-      - image: cimg/go:1.20
+      - image: cimg/go:1.21
 
-  # `main_large` uses the `cimg/go:1.20` docker image with a large resource class.
+  # `main_large` uses the `cimg/go:1.21` docker image with a large resource class.
   main_large:
     docker:
-      - image: cimg/go:1.20
+      - image: cimg/go:1.21
     resource_class: large
 
   # `macos` uses the macOS machine image.
