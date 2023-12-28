@@ -9,10 +9,16 @@ version: "2.1"
 
 executors:
 
-  # `arm` uses an ARM machine image.
-  arm:
+  # `ubuntu_amd64` uses an ubuntu machine image.
+  ubuntu_amd64:
     machine:
-      image: ubuntu-2004:202101-01
+      image: ubuntu-2204:2023.10.1
+    resource_class: amd64.medium
+
+  # `ubuntu_arm` uses an ARM machine image.
+  ubuntu_arm:
+    machine:
+      image: ubuntu-2204:2023.10.1
     resource_class: arm.medium
 
   # `base` uses the `cimg/base` docker image.
@@ -20,13 +26,13 @@ executors:
     docker:
       - image: cimg/base:2023.02
 
-  # `main` uses the `cimg/go:1.21` docker image.
-  main:
+  # `go` uses the `cimg/go:1.21` docker image.
+  go:
     docker:
       - image: cimg/go:1.21
 
-  # `main_large` uses the `cimg/go:1.21` docker image with a large resource class.
-  main_large:
+  # `go_large` uses the `cimg/go:1.21` docker image with a large resource class.
+  go_large:
     docker:
       - image: cimg/go:1.21
     resource_class: large
@@ -49,7 +55,7 @@ jobs:
 
   # `test_go` tests the source code.
   test_go:
-    executor: main
+    executor: go
     steps:
       - checkout
       - setup_remote_docker:
@@ -62,7 +68,7 @@ jobs:
 
   # `test_cli` tests the executable.
   test_cli:
-    executor: main
+    executor: go
     steps:
       - checkout
       - setup_remote_docker:
@@ -74,7 +80,7 @@ jobs:
 
   # `build` builds the executables
   build:
-    executor: main_large
+    executor: go_large
     steps:
       - checkout
 
@@ -123,7 +129,7 @@ jobs:
 
   # `build_docker` builds the docker container.
   build_docker:
-    executor: main
+    executor: ubuntu_amd64
     steps:
       - checkout
       - setup_remote_docker:
@@ -144,7 +150,7 @@ jobs:
 
   # `verify_linux_arm` verifys the linux/arm build
   verify_linux_arm:
-    executor: arm
+    executor: ubuntu_arm
     steps:
       - attach_workspace:
           at: bin
