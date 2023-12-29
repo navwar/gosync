@@ -81,7 +81,7 @@ jobs:
       - run: make sync_testdata
       - run: make bin/minio_linux_amd64
       - run: make minio_serve_detached
-      - run: make minio_sync_testdata
+      - run: 'export "PATH=$(PWD)/bin:$PATH" && make minio_sync_testdata'
       - run: make minio_stop_detached
 
   # `build` builds the executables
