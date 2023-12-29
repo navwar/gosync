@@ -80,7 +80,7 @@ jobs:
       - run: make test_cli
       - run: make sync_testdata
       - run: 'make bin/minio_linux_amd64 && mv bin/minio_linux_amd64 bin/minio'
-      - run: 'make minio_serve_detached && sleep 3 && cat temp/minio/log'
+      - run: 'export "PATH=$(pwd)/bin:$PATH" && make minio_serve_detached && sleep 3 && cat temp/minio/log'
       - run: 'export "PATH=$(pwd)/bin:$PATH" && make minio_sync_testdata'
       - run: make minio_stop_detached
 
