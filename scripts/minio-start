@@ -27,7 +27,7 @@ if [[ -f "${pid_file}" ]]; then
   exit 1
 fi
 
-minio server --quiet "${data_dir}" >> "${log_file}" 2>&1 &
+minio server "${data_dir}" >> "${log_file}" 2>&1 &
 MINIO_PID=$!
 echo $MINIO_PID > "${pid_file}"
 
