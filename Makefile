@@ -75,6 +75,10 @@ bin/gosync: ## Build gosync program for local operating system and architecture
 bin/gosync_linux_amd64: bin/gox ## Build gosync program for Linux on amd64
 	scripts/build-release linux amd64
 
+bin/minio_linux_amd64:
+	curl -sSL https://dl.min.io/server/minio/release/linux-amd64/minio -o bin/minio_linux_amd64
+	chmod +x bin/minio_linux_amd64
+
 #
 # Build Targets
 #
@@ -95,8 +99,8 @@ rebuild:  ## Rebuild binary
 # Local
 #
 
-.PHONY: sync_example
-sync_example: bin/gosync  ## Sync using local binary
+.PHONY: sync_testdata
+sync_testdata: bin/gosync  ## Sync using local binary
 	# delete temp directory
 	rm -fr temp
 	# sync files
@@ -122,8 +126,8 @@ docker_build: ## Build the docker image
 docker_help: ## Run the help command using docker image
 	docker run -it --rm gosync:latest help
 
-.PHONY: docker_sync_example
-docker_sync_example: ## Sync using docker image
+.PHONY: docker_sync_testdata
+docker_sync_testdata: ## Sync using docker image
 	# delete temp directory
 	rm -fr temp
 	# sync files
@@ -142,8 +146,22 @@ docker_version:  ## Run the version command using docker image
 	docker run -it --rm gosync:latest version
 
 .PHONY: minio_serve
-minio_serve:
-	minio server temp/minio
+minio_serve:  ## Run a local minio server
+	mkdir -p temp/minio
+	minio server temp/minio/data
+
+.PHONY: minio_serve_detached
+minio_serve_detached:  ## Run a local minio server as detached process
+	mkdir -p temp/minio
+	scripts/minio-start temp/minio/data temp/minio/pid temp/minio/log
+
+.PHONY: minio_serve_detached
+minio_stop_detached:  ## Stop the local minio server running as as detached process
+	scripts/pid-stop temp/minio/pid
+
+.PHONY: minio_sync_testdata
+minio_sync_testdata:  ## Sync the testdata directory to a local minio server
+	scripts/minio-sync http://localhost:9000 testdata s3://testdata
 
 ## Clean
 

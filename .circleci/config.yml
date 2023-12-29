@@ -9,12 +9,12 @@ version: "2.1"
 
 executors:
 
-  # `ubuntu_amd64` uses an ubuntu machine image.
+  # `ubuntu_amd64` uses an ubuntu amd64 machine image.
   ubuntu_amd64:
     machine:
       image: ubuntu-2204:2023.10.1
 
-  # `ubuntu_arm` uses an ARM machine image.
+  # `ubuntu_arm` uses an ubuntu ARM machine image.
   ubuntu_arm:
     machine:
       image: ubuntu-2204:2023.10.1
@@ -68,6 +68,9 @@ jobs:
   # `test_cli` tests the executable.
   test_cli:
     executor: go
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     steps:
       - checkout
       - setup_remote_docker:
@@ -75,7 +78,11 @@ jobs:
       - run: make tidy
       - run: make bin/gosync
       - run: make test_cli
-      - run: make sync_example
+      - run: make sync_testdata
+      - run: make bin/minio_linux_amd64
+      - run: make minio_serve_detached
+      - run: make minio_sync_testdata
+      - run: make minio_stop_detached
 
   # `build` builds the executables
   build:
@@ -131,12 +138,10 @@ jobs:
     executor: ubuntu_amd64
     steps:
       - checkout
-      # - setup_remote_docker:
-      #     docker_layer_caching: false
       - run: make docker_build
       - run: make docker_version
       - run: make docker_help
-      - run: make docker_sync_example
+      - run: make docker_sync_testdata
 
   # `verify_linux` verifys the linux build
   verify_linux:

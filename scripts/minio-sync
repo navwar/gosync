@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# ==================================================================================
+#
+# Work of the U.S. Department of the Navy, Naval Information Warfare Center Pacific.
+# Released as open source under the MIT License.  See LICENSE file.
+#
+# ==================================================================================
+
+set -euo pipefail
+
+function usage() {
+  echo "Usage: ${0##*/} ENDPOINT SOURCE DESTINATION"
+  exit 1
+}
+
+if [[ "$#" -ne 3 ]]; then
+  usage
+fi
+
+endpoint=$1
+source=$2
+destination=$3
+
+gosync sync \
+--aws-s3-endpoint "${endpoint}" \
+--aws-s3-use-path-style \
+--aws-access-key-id "${MINIO_ROOT_USER:-minioadmin}" \
+--aws-secret-access-key "${MINIO_ROOT_PASSWORD:-minioadmin}" \
+--parents \
+"${source}" "${destination}"

@@ -367,6 +367,20 @@ func (s3fs *S3FileSystem) MagicNumbers(ctx context.Context, names []string, thre
 
 func (s3fs *S3FileSystem) MkdirAll(ctx context.Context, name string, mode os.FileMode) error {
 	bucket, key := s3fs.parse(name)
+	if len(key) == 0 {
+		_, err := s3fs.clients[s3fs.defaultRegion].CreateBucket(ctx, &s3.CreateBucketInput{
+			ACL:    types.BucketCannedACLPrivate,
+			Bucket: aws.String(bucket),
+			CreateBucketConfiguration: &types.CreateBucketConfiguration{
+				LocationConstraint: types.BucketLocationConstraint(s3fs.defaultRegion),
+			},
+			ObjectOwnership: types.ObjectOwnershipBucketOwnerEnforced,
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	}
 	_, err := s3fs.clients[s3fs.GetBucketRegion(bucket)].PutObject(ctx, &s3.PutObjectInput{
 		ACL:              types.ObjectCannedACLBucketOwnerFullControl,
 		Body:             bytes.NewReader([]byte{}),
@@ -1153,7 +1167,7 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirec
 		if s3fs.IsNotExist(statError) {
 			mkdirAllError := s3fs.MkdirAll(ctx, input.DestinationDirectory, 0755)
 			if mkdirAllError != nil {
-				return 0, fmt.Errorf("error creating destination directory for %q", input.DestinationDirectory)
+				return 0, fmt.Errorf("error creating destination directory for %q: %w", input.DestinationDirectory, mkdirAllError)
 			}
 		} else {
 			return 0, fmt.Errorf("error stating destination directory %q: %w", input.DestinationDirectory, statError)

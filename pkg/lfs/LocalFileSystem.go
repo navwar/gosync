@@ -416,7 +416,7 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDir
 		if lfs.IsNotExist(statError) {
 			mkdirAllError := lfs.MkdirAll(ctx, input.DestinationDirectory, 0755)
 			if mkdirAllError != nil {
-				return 0, fmt.Errorf("error creating destination directory for %q", input.DestinationDirectory)
+				return 0, fmt.Errorf("error creating destination directory for %q: %w", input.DestinationDirectory, mkdirAllError)
 			}
 		} else {
 			return 0, fmt.Errorf("error stating destination directory %q: %w", input.DestinationDirectory, statError)
