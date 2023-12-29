@@ -83,13 +83,13 @@ jobs:
       - run:
           name: "minio test"
           command: >
-          export "PATH=$(pwd)/bin:$PATH" &&
-          make minio_serve_detached &&
-          sleep 3 &&
-          cat temp/minio/log &&
-          make minio_sync_testdata &&
-          make minio_sync_testdata &&
-          make minio_stop_detached
+            export "PATH=$(pwd)/bin:$PATH" &&
+            make minio_serve_detached &&
+            sleep 3 &&
+            cat temp/minio/log &&
+            make minio_sync_testdata &&
+            make minio_sync_testdata &&
+            make minio_stop_detached
 
   # `build` builds the executables
   build:
