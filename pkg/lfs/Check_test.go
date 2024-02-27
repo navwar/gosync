@@ -5,7 +5,7 @@
 //
 // ==================================================================================
 
-package s3fs
+package lfs
 
 import (
 	"testing"
@@ -13,8 +13,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSplit(t *testing.T) {
-	assert.Equal(t, []string{"a", "b"}, Split("a/b"))
-	assert.Equal(t, []string{"a", "b"}, Split("a/b/"))
-	assert.Equal(t, []string{"/", "a", "b"}, Split("/a/b/"))
+func TestCheck(t *testing.T) {
+	assert.NoError(t, Check("a", "b"))
+	assert.NoError(t, Check("a/c", "b/c"))
+	assert.NoError(t, Check("a/c/d", "a/c/e"))
+	assert.Error(t, Check("a/b", "a"))
+	assert.Error(t, Check("a", "a/b"))
+	assert.Error(t, Check("a", "a/b/c"))
+	assert.Error(t, Check("a/b", "a/b/c"))
+	assert.Error(t, Check("a/b/c", "a/b"))
+	assert.Error(t, Check("a/b/c", "a"))
 }

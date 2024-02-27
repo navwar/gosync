@@ -28,4 +28,5 @@ gosync sync \
 --aws-access-key-id "${MINIO_ROOT_USER:-minioadmin}" \
 --aws-secret-access-key "${MINIO_ROOT_PASSWORD:-minioadmin}" \
 --parents \
+--debug \
 "${source}" "${destination}"

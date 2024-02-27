@@ -8,13 +8,20 @@
 package s3fs
 
 import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"path"
 )
 
-func TestSplit(t *testing.T) {
-	assert.Equal(t, []string{"a", "b"}, Split("a/b"))
-	assert.Equal(t, []string{"a", "b"}, Split("a/b/"))
-	assert.Equal(t, []string{"/", "a", "b"}, Split("/a/b/"))
+// Dir returns all but the last element of path
+func Dir(p string) string {
+	if len(p) == 0 {
+		return "."
+	}
+	directories := Split(p)
+	if len(directories) == 1 {
+		if directories[0] == "/" {
+			return "/"
+		}
+		return "."
+	}
+	return path.Join(directories[0 : len(directories)-1]...)
 }

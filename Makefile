@@ -160,8 +160,11 @@ minio_stop_detached:  ## Stop the local minio server running as as detached proc
 	scripts/pid-stop temp/minio/pid
 
 .PHONY: minio_sync_testdata
-minio_sync_testdata:  ## Sync the testdata directory to a local minio server
-	scripts/minio-sync http://localhost:9000 testdata s3://testdata
+minio_sync_testdata:  ## Sync the testdata directory to a local minio server and back to temp/testdata
+	@scripts/minio-sync http://localhost:9000 testdata s3://testdata
+	@scripts/minio-sync http://localhost:9000 s3://testdata s3://testdata2
+	@scripts/minio-sync http://localhost:9000 s3://testdata2 s3://testdata
+	@scripts/minio-sync http://localhost:9000 s3://testdata temp/testdata
 
 ## Clean
 

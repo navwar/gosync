@@ -301,14 +301,38 @@ func checkSyncConfig(v *viper.Viper, args []string) error {
 	if len(args) != 2 {
 		return fmt.Errorf("expecting 2 positional arguments for source and destination, but found %d arguments", len(args))
 	}
-	if args[0] == args[1] {
-		return fmt.Errorf("source and destination must be different: %q", args[0])
-	}
-	if strings.HasPrefix(args[0], args[1]) {
-		return fmt.Errorf("destination %q cannot be a prefix for source %q", args[1], args[0])
-	}
-	if strings.HasPrefix(args[1], args[0]) {
-		return fmt.Errorf("source %q cannot be a prefix for destination %q", args[0], args[1])
+
+	if strings.HasPrefix(args[0], "s3://") && strings.HasPrefix(args[1], "s3://") {
+		sourceEndpoint := v.GetString(flagSourceAWSS3Endpoint)
+		if len(sourceEndpoint) == 0 {
+			sourceEndpoint = v.GetString(flagAWSS3Endpoint)
+		}
+		destinationEndpoint := v.GetString(flagDestinationAWSS3Endpoint)
+		if len(destinationEndpoint) == 0 {
+			destinationEndpoint = v.GetString(flagAWSS3Endpoint)
+		}
+		if sourceEndpoint == destinationEndpoint {
+			if err := s3fs.Check(args[0][len("s3://"):], args[1][len("s3://"):]); err != nil {
+				return err
+			}
+		}
+	} else {
+		sourcePath := args[0]
+		if strings.HasPrefix(sourcePath, "file://") {
+			sourcePath = args[0][len("file://"):]
+		}
+		destinationPath := args[1]
+		if strings.HasPrefix(destinationPath, "file://") {
+			destinationPath = args[1][len("file://"):]
+		}
+		// check that source and destination must be different
+		if args[0] == args[1] {
+			return fmt.Errorf("source and destination must be different: %q", args[0])
+		}
+		// check for cycle errors
+		if err := lfs.Check(sourcePath, destinationPath); err != nil {
+			return err
+		}
 	}
 	if err := checkAWSConfig(v, args); err != nil {
 		return fmt.Errorf("error with AWS configuration: %w", err)

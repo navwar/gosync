@@ -500,7 +500,12 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string, recursive bo
 			for _, object := range listObjectsOutput.Contents {
 				fileName := ""
 				if len(s3fs.bucket) == 0 {
-					fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
+					if strings.HasSuffix(aws.ToString(object.Key), "/") {
+						// if key ends in slash, then add it back since s3fs.Join strips trailing slashes
+						fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key))+"/", name+"/")
+					} else {
+						fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
+					}
 				} else if len(s3fs.prefix) > 0 {
 					fileName = strings.TrimPrefix(strings.TrimPrefix(aws.ToString(object.Key), s3fs.prefix), name+"/")
 				} else {
@@ -535,6 +540,7 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string, recursive bo
 		} else {
 			// no limit for number of directory entries
 			for _, commonPrefix := range listObjectsOutput.CommonPrefixes {
+				//fmt.Println("Common Prefix:", aws.ToString(commonPrefix.Prefix))
 				directoryPrefix := strings.TrimRight(aws.ToString(commonPrefix.Prefix), "/")
 				directoryName := ""
 				if len(s3fs.bucket) == 0 {
@@ -562,12 +568,18 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string, recursive bo
 			for _, object := range listObjectsOutput.Contents {
 				fileName := ""
 				if len(s3fs.bucket) == 0 {
-					fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
+					if strings.HasSuffix(aws.ToString(object.Key), "/") {
+						// if key ends in slash, then add it back since s3fs.Join strips trailing slashes
+						fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key))+"/", name+"/")
+					} else {
+						fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
+					}
 				} else if len(s3fs.prefix) > 0 {
 					fileName = strings.TrimPrefix(strings.TrimPrefix(aws.ToString(object.Key), s3fs.prefix), name+"/")
 				} else {
 					fileName = strings.TrimPrefix("/"+aws.ToString(object.Key), name+"/")
 				}
+				//fmt.Println("fileName:", fileName)
 				// fileName is a blank string then there is a directory marker in s3,
 				// and you returned itself, so you can safely skip this one.
 				if fileName != "" {
@@ -1132,6 +1144,9 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirec
 		return 0, fmt.Errorf("error reading source directory %q: %w", input.SourceDirectory, err)
 	} else {
 		for _, sourceDirectoryEntry := range sourceDirectoryEntries {
+			if input.SourceDirectory == sourceDirectoryEntry.Name() {
+				return 0, errors.New("the directory entry cannot have the same path as its parent:" + sourceDirectoryEntry.Name())
+			}
 			sourceName := filepath.Join(input.SourceDirectory, sourceDirectoryEntry.Name())
 			sourceDirectoryEntriesByName[sourceName] = sourceDirectoryEntry
 		}
@@ -1421,7 +1436,7 @@ func (s3fs *S3FileSystem) Sync(ctx context.Context, input *fs.SyncInput) (int, e
 		return 0, fmt.Errorf("error stating source %q: %w", input.Source, err)
 	}
 
-	if len(s3fs.bucket) == 0 {
+	if len(s3fs.bucket) == 0 && !input.Parents {
 		destinationBucket := strings.Split(strings.TrimPrefix(input.Destination, "/"), "/")[0]
 		_, statError := s3fs.Stat(ctx, destinationBucket)
 		if statError != nil {

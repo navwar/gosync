@@ -13,8 +13,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSplit(t *testing.T) {
-	assert.Equal(t, []string{"a", "b"}, Split("a/b"))
-	assert.Equal(t, []string{"a", "b"}, Split("a/b/"))
-	assert.Equal(t, []string{"/", "a", "b"}, Split("/a/b/"))
+func TestDir(t *testing.T) {
+	assert.Equal(t, "a", Dir("a/b"))
+	assert.Equal(t, "a", Dir("a/b/"))
+	assert.Equal(t, "a/b", Dir("a/b/c"))
+	assert.Equal(t, "a/b", Dir("a/b/cd"))
+	assert.Equal(t, "/a", Dir("/a/b/"))
+	assert.Equal(t, "/a/b", Dir("/a/b/c/"))
+	assert.Equal(t, "/a/b", Dir("/a/b/cd/"))
 }
