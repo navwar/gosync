@@ -55,7 +55,7 @@ func (s3fs *S3FileSystem) CopyObject(ctx context.Context, source string, destina
 	_, err := s3fs.clients[s3fs.GetBucketRegion(destinationBucket)].CopyObject(ctx, &s3.CopyObjectInput{
 		ACL:              types.ObjectCannedACLBucketOwnerFullControl,
 		Bucket:           aws.String(destinationBucket),
-		BucketKeyEnabled: s3fs.bucketKeyEnabled,
+		BucketKeyEnabled: aws.Bool(s3fs.bucketKeyEnabled),
 		Key:              aws.String(destinationKey),
 		CopySource:       aws.String(fmt.Sprintf("%s/%s", sourceBucket, sourceKey)),
 	})
@@ -101,7 +101,7 @@ func (s3fs *S3FileSystem) DeleteObjects(ctx context.Context, names []string) err
 			}
 			delete := &types.Delete{
 				Objects: objects,
-				Quiet:   true,
+				Quiet:   aws.Bool(true),
 			}
 			_, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 				Bucket: aws.String(bucket),
@@ -130,7 +130,7 @@ func (s3fs *S3FileSystem) MultipartCopyObject(ctx context.Context, source string
 	createMultipartUploadOutput, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		ACL:              types.ObjectCannedACLBucketOwnerFullControl,
 		Bucket:           aws.String(destinationBucket),
-		BucketKeyEnabled: s3fs.bucketKeyEnabled,
+		BucketKeyEnabled: aws.Bool(s3fs.bucketKeyEnabled),
 		Key:              aws.String(destinationKey),
 	})
 	if err != nil {
@@ -168,7 +168,7 @@ func (s3fs *S3FileSystem) MultipartCopyObject(ctx context.Context, source string
 			CopySource:      aws.String(fmt.Sprintf("%s/%s", sourceBucket, sourceKey)),
 			CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", part.start, part.end)),
 			Key:             aws.String(destinationKey),
-			PartNumber:      partNumber,
+			PartNumber:      aws.Int32(partNumber),
 			UploadId:        uploadID,
 		})
 		if uploadPartCopyError != nil {
@@ -182,7 +182,7 @@ func (s3fs *S3FileSystem) MultipartCopyObject(ctx context.Context, source string
 	for i := int32(1); i <= int32(len(parts)); i++ {
 		completedParts = append(completedParts, types.CompletedPart{
 			ETag:       etags[i],
-			PartNumber: i,
+			PartNumber: aws.Int32(i),
 		})
 	}
 
@@ -322,8 +322,8 @@ func (s3fs *S3FileSystem) HeadObject(ctx context.Context, name string) (*S3FileI
 	fi := NewS3FileInfo(
 		name,
 		aws.ToTime(headObjectOutput.LastModified),
-		headObjectOutput.ContentLength == int64(0),
-		headObjectOutput.ContentLength,
+		aws.ToInt64(headObjectOutput.ContentLength) == int64(0),
+		aws.ToInt64(headObjectOutput.ContentLength),
 	)
 	return fi, nil
 }
@@ -367,12 +367,26 @@ func (s3fs *S3FileSystem) MagicNumbers(ctx context.Context, names []string, thre
 
 func (s3fs *S3FileSystem) MkdirAll(ctx context.Context, name string, mode os.FileMode) error {
 	bucket, key := s3fs.parse(name)
+	if len(key) == 0 {
+		_, err := s3fs.clients[s3fs.defaultRegion].CreateBucket(ctx, &s3.CreateBucketInput{
+			ACL:    types.BucketCannedACLPrivate,
+			Bucket: aws.String(bucket),
+			CreateBucketConfiguration: &types.CreateBucketConfiguration{
+				LocationConstraint: types.BucketLocationConstraint(s3fs.defaultRegion),
+			},
+			ObjectOwnership: types.ObjectOwnershipBucketOwnerEnforced,
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	}
 	_, err := s3fs.clients[s3fs.GetBucketRegion(bucket)].PutObject(ctx, &s3.PutObjectInput{
 		ACL:              types.ObjectCannedACLBucketOwnerFullControl,
 		Body:             bytes.NewReader([]byte{}),
 		Bucket:           aws.String(bucket),
-		BucketKeyEnabled: s3fs.bucketKeyEnabled,
-		ContentLength:    int64(0),
+		BucketKeyEnabled: aws.Bool(s3fs.bucketKeyEnabled),
+		ContentLength:    aws.Int64(0),
 		Key:              aws.String(key + "/"),
 	})
 	if err != nil {
@@ -440,7 +454,7 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string, recursive bo
 			Delimiter: delimiter,
 		}
 		if s3fs.maxEntries != -1 && s3fs.maxEntries < 1000 {
-			listObjectsInput.MaxKeys = int32(s3fs.maxEntries)
+			listObjectsInput.MaxKeys = aws.Int32(int32(s3fs.maxEntries))
 		}
 		listObjectsInput.Prefix = aws.String(prefix)
 		if marker != nil {
@@ -486,7 +500,12 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string, recursive bo
 			for _, object := range listObjectsOutput.Contents {
 				fileName := ""
 				if len(s3fs.bucket) == 0 {
-					fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
+					if strings.HasSuffix(aws.ToString(object.Key), "/") {
+						// if key ends in slash, then add it back since s3fs.Join strips trailing slashes
+						fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key))+"/", name+"/")
+					} else {
+						fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
+					}
 				} else if len(s3fs.prefix) > 0 {
 					fileName = strings.TrimPrefix(strings.TrimPrefix(aws.ToString(object.Key), s3fs.prefix), name+"/")
 				} else {
@@ -506,9 +525,9 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string, recursive bo
 				if fileName != "" {
 					directoryEntries = append(directoryEntries, &S3DirectoryEntry{
 						name:    fileName,
-						dir:     (object.Size == 0) && strings.HasSuffix(aws.ToString(object.Key), "/"),
+						dir:     (aws.ToInt64(object.Size) == 0) && strings.HasSuffix(aws.ToString(object.Key), "/"),
 						modTime: aws.ToTime(object.LastModified),
-						size:    object.Size,
+						size:    aws.ToInt64(object.Size),
 					})
 				}
 				if len(directoryEntries) == s3fs.maxEntries {
@@ -548,7 +567,12 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string, recursive bo
 			for _, object := range listObjectsOutput.Contents {
 				fileName := ""
 				if len(s3fs.bucket) == 0 {
-					fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
+					if strings.HasSuffix(aws.ToString(object.Key), "/") {
+						// if key ends in slash, then add it back since s3fs.Join strips trailing slashes
+						fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key))+"/", name+"/")
+					} else {
+						fileName = strings.TrimPrefix("/"+s3fs.Join(bucket, aws.ToString(object.Key)), name+"/")
+					}
 				} else if len(s3fs.prefix) > 0 {
 					fileName = strings.TrimPrefix(strings.TrimPrefix(aws.ToString(object.Key), s3fs.prefix), name+"/")
 				} else {
@@ -559,14 +583,14 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string, recursive bo
 				if fileName != "" {
 					directoryEntries = append(directoryEntries, &S3DirectoryEntry{
 						name:    fileName,
-						dir:     (object.Size == 0) && strings.HasSuffix(aws.ToString(object.Key), "/"),
+						dir:     (aws.ToInt64(object.Size) == 0) && strings.HasSuffix(aws.ToString(object.Key), "/"),
 						modTime: aws.ToTime(object.LastModified),
-						size:    object.Size,
+						size:    aws.ToInt64(object.Size),
 					})
 				}
 			}
 		}
-		if !listObjectsOutput.IsTruncated {
+		if !aws.ToBool(listObjectsOutput.IsTruncated) {
 			break
 		}
 		marker = listObjectsOutput.NextMarker
@@ -735,7 +759,7 @@ func (s3fs *S3FileSystem) Size(ctx context.Context, name string) (int64, error) 
 	if err != nil {
 		return int64(0), err
 	}
-	return headObjectOutput.ContentLength, nil
+	return aws.ToInt64(headObjectOutput.ContentLength), nil
 }
 
 func (s3fs *S3FileSystem) Stat(ctx context.Context, name string) (fs.FileInfo, error) {
@@ -829,7 +853,7 @@ func (s3fs *S3FileSystem) Stat(ctx context.Context, name string) (fs.FileInfo, e
 	return fi, nil
 }
 
-func (s3fs *S3FileSystem) Open(ctx context.Context, name string) (fs.File, error) {
+func (s3fs *S3FileSystem) Open(ctx context.Context, name string) (fs.Object, error) {
 	size, sizeError := s3fs.Size(ctx, name)
 	if sizeError != nil {
 		return nil, sizeError
@@ -936,7 +960,7 @@ func (s3fs *S3FileSystem) Open(ctx context.Context, name string) (fs.File, error
 	return NewS3File(name, readSeeker, downloader, nil), nil
 }
 
-func (s3fs *S3FileSystem) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (fs.File, error) {
+func (s3fs *S3FileSystem) OpenObject(ctx context.Context, name string, flag int, perm os.FileMode) (fs.Object, error) {
 	doesNotExist := false
 	size, sizeError := s3fs.Size(ctx, name)
 	if sizeError != nil {
@@ -1117,6 +1141,9 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirec
 		return 0, fmt.Errorf("error reading source directory %q: %w", input.SourceDirectory, err)
 	} else {
 		for _, sourceDirectoryEntry := range sourceDirectoryEntries {
+			if input.SourceDirectory == sourceDirectoryEntry.Name() {
+				return 0, errors.New("the directory entry cannot have the same path as its parent:" + sourceDirectoryEntry.Name())
+			}
 			sourceName := filepath.Join(input.SourceDirectory, sourceDirectoryEntry.Name())
 			sourceDirectoryEntriesByName[sourceName] = sourceDirectoryEntry
 		}
@@ -1140,6 +1167,7 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirec
 		_ = input.Logger.Log("Synchronizing Directory", map[string]interface{}{
 			"delete":  input.Delete,
 			"dst":     input.DestinationDirectory,
+			"exclude": input.Exclude,
 			"files":   len(sourceDirectoryEntries),
 			"src":     input.SourceDirectory,
 			"threads": input.MaxThreads,
@@ -1151,7 +1179,7 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirec
 		if s3fs.IsNotExist(statError) {
 			mkdirAllError := s3fs.MkdirAll(ctx, input.DestinationDirectory, 0755)
 			if mkdirAllError != nil {
-				return 0, fmt.Errorf("error creating destination directory for %q", input.DestinationDirectory)
+				return 0, fmt.Errorf("error creating destination directory for %q: %w", input.DestinationDirectory, mkdirAllError)
 			}
 		} else {
 			return 0, fmt.Errorf("error stating destination directory %q: %w", input.DestinationDirectory, statError)
@@ -1213,6 +1241,7 @@ func (s3fs *S3FileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDirec
 			c, err := s3fs.SyncDirectory(ctx, &fs.SyncDirectoryInput{
 				CheckTimestamps:      input.CheckTimestamps,
 				Delete:               input.Delete,
+				Exclude:              input.Exclude,
 				SourceDirectory:      sourceName,
 				DestinationDirectory: destinationName,
 				Limit:                directoryLimit,
@@ -1404,7 +1433,7 @@ func (s3fs *S3FileSystem) Sync(ctx context.Context, input *fs.SyncInput) (int, e
 		return 0, fmt.Errorf("error stating source %q: %w", input.Source, err)
 	}
 
-	if len(s3fs.bucket) == 0 {
+	if len(s3fs.bucket) == 0 && !input.Parents {
 		destinationBucket := strings.Split(strings.TrimPrefix(input.Destination, "/"), "/")[0]
 		_, statError := s3fs.Stat(ctx, destinationBucket)
 		if statError != nil {

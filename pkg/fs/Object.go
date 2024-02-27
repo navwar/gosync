@@ -5,16 +5,16 @@
 //
 // ==================================================================================
 
-package s3fs
+package fs
 
 import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"context"
+	"io"
 )
 
-func TestSplit(t *testing.T) {
-	assert.Equal(t, []string{"a", "b"}, Split("a/b"))
-	assert.Equal(t, []string{"a", "b"}, Split("a/b/"))
-	assert.Equal(t, []string{"/", "a", "b"}, Split("/a/b/"))
+type Object interface {
+	io.ReadSeekCloser
+	io.WriteCloser
+	Name() string
+	WriteTo(ctx context.Context, w Writer) (int64, error)
 }

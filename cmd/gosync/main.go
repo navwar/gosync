@@ -69,6 +69,26 @@ const (
 	flagBucketKeyEnabled  = "aws-bucket-key-enabled"
 )
 
+// Sync Flags
+const (
+	// AWS Source Flags
+	flagSourceAWSProfile         = "source-aws-profile"
+	flagSourceAWSRegion          = "source-aws-region"
+	flagSourceAWSS3Endpoint      = "source-aws-s3-endpoint"
+	flagSourceAWSS3UsePathStyle  = "source-aws-s3-use-path-style"
+	flagSourceAWSAccessKeyID     = "source-aws-access-key-id"
+	flagSourceAWSSecretAccessKey = "source-aws-secret-access-key"
+	flagSourceAWSSessionToken    = "source-aws-session-token"
+	// AWS Destination Flags
+	flagDestinationAWSProfile         = "destination-aws-profile"
+	flagDestinationAWSRegion          = "destination-aws-region"
+	flagDestinationAWSS3Endpoint      = "destination-aws-s3-endpoint"
+	flagDestinationAWSS3UsePathStyle  = "destination-aws-s3-use-path-style"
+	flagDestinationAWSAccessKeyID     = "destination-aws-access-key-id"
+	flagDestinationAWSSecretAccessKey = "destination-aws-secret-access-key"
+	flagDestinationAWSSessionToken    = "destination-aws-session-token"
+)
+
 // AWS Defaults
 const (
 	// Role
@@ -157,6 +177,7 @@ func initAWSFlags(flag *pflag.FlagSet) {
 	flag.Bool(flagAWSS3UsePathStyle, false, "Use path-style addressing (default is to use virtual-host-style addressing)")
 	flag.Bool(flagBucketKeyEnabled, false, "bucket key enabled")
 }
+
 func initDebugFlags(flag *pflag.FlagSet) {
 	flag.BoolP(flagDebug, "d", false, "print debug messages")
 }
@@ -182,6 +203,22 @@ func initSyncFlags(flag *pflag.FlagSet) {
 	flag.Int(flagPartSize, DefaultPartSize, fmt.Sprintf("size of parts in bytes when transferring to S3 (minimum %d)", MinimumPartSize))
 	flag.StringP(flagExclude, "e", "", "a colon-separated list of paths to exclude with support for wildcards, e.g, path, *path, path*, or *path*.")
 	flag.Duration(flagTimestampPrecision, DefaultTimestampPrecision, "precision to use when checking timestamps")
+	// AWS Source Flags
+	flag.String(flagSourceAWSProfile, "default", "AWS Profile for source")
+	flag.String(flagSourceAWSRegion, "", "AWS Region for source")
+	flag.String(flagSourceAWSS3Endpoint, "", "AWS S3 Endpoint URL for source")
+	flag.Bool(flagSourceAWSS3UsePathStyle, false, "Use path-style addressing (default is to use virtual-host-style addressing) for source")
+	flag.String(flagSourceAWSAccessKeyID, "", "AWS Access Key ID for source")
+	flag.String(flagSourceAWSSecretAccessKey, "", "AWS Secret Access Key for source")
+	flag.String(flagSourceAWSSessionToken, "", "AWS Session Token for source.  Set to none or nil to disable fallback to --aws-session-token.")
+	// AWS Destination Flags
+	flag.String(flagDestinationAWSProfile, "default", "AWS Profile for destination")
+	flag.String(flagDestinationAWSRegion, "", "AWS Region for destination")
+	flag.String(flagDestinationAWSS3Endpoint, "", "AWS S3 Endpoint URL for destination")
+	flag.Bool(flagDestinationAWSS3UsePathStyle, false, "Use path-style addressing (default is to use virtual-host-style addressing) for destination")
+	flag.String(flagDestinationAWSAccessKeyID, "", "AWS Access Key ID for destination")
+	flag.String(flagDestinationAWSSecretAccessKey, "", "AWS Secret Access Key for destination")
+	flag.String(flagDestinationAWSSessionToken, "", "AWS Session Token for destination.  Set to none or nil to disable fallback to --aws-session-token.")
 }
 
 func initLogFlags(flag *pflag.FlagSet) {
@@ -264,14 +301,38 @@ func checkSyncConfig(v *viper.Viper, args []string) error {
 	if len(args) != 2 {
 		return fmt.Errorf("expecting 2 positional arguments for source and destination, but found %d arguments", len(args))
 	}
-	if args[0] == args[1] {
-		return fmt.Errorf("source and destination must be different: %q", args[0])
-	}
-	if strings.HasPrefix(args[0], args[1]) {
-		return fmt.Errorf("destination %q cannot be a prefix for source %q", args[1], args[0])
-	}
-	if strings.HasPrefix(args[1], args[0]) {
-		return fmt.Errorf("source %q cannot be a prefix for destination %q", args[0], args[1])
+
+	if strings.HasPrefix(args[0], "s3://") && strings.HasPrefix(args[1], "s3://") {
+		sourceEndpoint := v.GetString(flagSourceAWSS3Endpoint)
+		if len(sourceEndpoint) == 0 {
+			sourceEndpoint = v.GetString(flagAWSS3Endpoint)
+		}
+		destinationEndpoint := v.GetString(flagDestinationAWSS3Endpoint)
+		if len(destinationEndpoint) == 0 {
+			destinationEndpoint = v.GetString(flagAWSS3Endpoint)
+		}
+		if sourceEndpoint == destinationEndpoint {
+			if err := s3fs.Check(args[0][len("s3://"):], args[1][len("s3://"):]); err != nil {
+				return err
+			}
+		}
+	} else {
+		sourcePath := args[0]
+		if strings.HasPrefix(sourcePath, "file://") {
+			sourcePath = args[0][len("file://"):]
+		}
+		destinationPath := args[1]
+		if strings.HasPrefix(destinationPath, "file://") {
+			destinationPath = args[1][len("file://"):]
+		}
+		// check that source and destination must be different
+		if args[0] == args[1] {
+			return fmt.Errorf("source and destination must be different: %q", args[0])
+		}
+		// check for cycle errors
+		if err := lfs.Check(sourcePath, destinationPath); err != nil {
+			return err
+		}
 	}
 	if err := checkAWSConfig(v, args); err != nil {
 		return fmt.Errorf("error with AWS configuration: %w", err)
@@ -285,43 +346,63 @@ func checkSyncConfig(v *viper.Viper, args []string) error {
 	if threads := v.GetInt(flagThreads); threads == 0 {
 		return errors.New("threads cannot be zero")
 	}
+	if checkTimestamps := v.GetBool(flagCheckTimestamps); checkTimestamps {
+		if strings.HasPrefix(args[1], "s3://") {
+			return fmt.Errorf("checking timestamps is incompatible with s3 destinations, as timestamps cannot be preserved")
+		}
+	}
 	return nil
 }
 
-func initS3Client(ctx context.Context, v *viper.Viper, profile string, partition string, region string) *s3.Client {
-	accessKeyID := v.GetString(flagAWSAccessKeyID)
-	secretAccessKey := v.GetString(flagAWSSecretAccessKey)
-	sessionToken := v.GetString(flagAWSSessionToken)
-	usePathStyle := v.GetBool(flagAWSS3UsePathStyle)
-	retryMaxAttempts := v.GetInt(flagAWSRetryMaxAttempts)
+type InitS3ClientInput struct {
+	Profile   string
+	Partition string
+	Region    string
+	// AWS Client
+	Endpoint           string
+	InsecureSkipVerify bool
+	RetryMaxAttempts   int
+	UsePathStyle       bool
+	// AWS Credentials
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+	// Client Log Mode
+	LogClientSigning   bool
+	LogClientRetries   bool
+	LogClientRequests  bool
+	LogClientResponses bool
+}
 
+func InitS3Client(ctx context.Context, input *InitS3ClientInput) *s3.Client {
 	clientLogMode := aws.ClientLogMode(0)
-	if logClientSigning := v.GetBool(flagLogClientSigning); logClientSigning {
+	if input.LogClientSigning {
 		clientLogMode |= aws.LogSigning
 	}
-	if logClientRetries := v.GetBool(flagLogClientRetries); logClientRetries {
+	if input.LogClientRetries {
 		clientLogMode |= aws.LogRetries
 	}
-	if logClientRequests := v.GetBool(flagLogClientRequests); logClientRequests {
+	if input.LogClientRequests {
 		clientLogMode |= aws.LogRequest
 	}
-	if logClientResponses := v.GetBool(flagLogClientResponses); logClientResponses {
+	if input.LogClientResponses {
 		clientLogMode |= aws.LogResponse
 	}
+
 	c := aws.Config{
 		ClientLogMode:    clientLogMode,
-		RetryMaxAttempts: retryMaxAttempts,
-		Region:           region,
+		RetryMaxAttempts: input.RetryMaxAttempts,
+		Region:           input.Region,
 		Logger:           log.NewClientLogger(os.Stdout),
 	}
 
-	if len(accessKeyID) > 0 && len(secretAccessKey) > 0 {
+	if len(input.AccessKeyID) > 0 && len(input.SecretAccessKey) > 0 {
 		c.Credentials = credentials.NewStaticCredentialsProvider(
-			accessKeyID,
-			secretAccessKey,
-			sessionToken)
+			input.AccessKeyID,
+			input.SecretAccessKey,
+			input.SessionToken)
 	} else {
-		sharedConfig, err := config.LoadSharedConfigProfile(ctx, profile)
+		sharedConfig, err := config.LoadSharedConfigProfile(ctx, input.Profile)
 		if err == nil {
 			c.Credentials = credentials.NewStaticCredentialsProvider(
 				sharedConfig.Credentials.AccessKeyID,
@@ -330,8 +411,7 @@ func initS3Client(ctx context.Context, v *viper.Viper, profile string, partition
 		}
 	}
 
-	insecureSkipVerify := v.GetBool(flagAWSInsecureSkipVerify)
-	if insecureSkipVerify {
+	if input.InsecureSkipVerify {
 		c.HTTPClient = &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
@@ -342,22 +422,50 @@ func initS3Client(ctx context.Context, v *viper.Viper, profile string, partition
 	}
 
 	client := s3.NewFromConfig(c, func(o *s3.Options) {
-		o.UsePathStyle = usePathStyle
-		if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
-			o.BaseEndpoint = aws.String(e)
+		o.UsePathStyle = input.UsePathStyle
+		if len(input.Endpoint) > 0 {
+			o.BaseEndpoint = aws.String(input.Endpoint)
 		}
 	})
 
 	return client
 }
 
-func initFileSystem(ctx context.Context, v *viper.Viper, root string, profile string, partition string, defaultRegion string, maxDirectoryEntries int, maxPages int, bucketKeyEnabled bool, sourceBucket string, destinationBucket string) fs.FileSystem {
+type InitFileSystemInput struct {
+	Viper               *viper.Viper
+	Root                string
+	Profile             string
+	Partition           string
+	DefaultRegion       string
+	MaxDirectoryEntries int
+	MaxPages            int
+	BucketKeyEnabled    bool
+	SourceBucket        string
+	DestinationBucket   string
+	// AWS Client
+	Endpoint           string
+	InsecureSkipVerify bool
+	RetryMaxAttempts   int
+	UsePathStyle       bool
+	PartSize           int
+	// AWS Credentials
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+	// Client Log Mode
+	LogClientSigning   bool
+	LogClientRetries   bool
+	LogClientRequests  bool
+	LogClientResponses bool
+}
 
-	if strings.HasPrefix(root, "file://") {
-		return lfs.NewLocalFileSystem(root[len("file://"):])
+func InitFileSystem(ctx context.Context, input *InitFileSystemInput) fs.FileSystem {
+
+	if strings.HasPrefix(input.Root, "file://") {
+		return lfs.NewLocalFileSystem(input.Root[len("file://"):])
 	}
 
-	if strings.HasPrefix(root, "s3://") {
+	if strings.HasPrefix(input.Root, "s3://") {
 		//
 		// List all buckets in accounts and store creation date
 		//
@@ -368,7 +476,25 @@ func initFileSystem(ctx context.Context, v *viper.Viper, root string, profile st
 		// Initialize Default Client
 		//
 
-		clients[defaultRegion] = initS3Client(ctx, v, profile, partition, defaultRegion)
+		clients[input.DefaultRegion] = InitS3Client(ctx, &InitS3ClientInput{
+			Profile:   input.Profile,
+			Partition: input.Partition,
+			Region:    input.DefaultRegion,
+			// AWS Client
+			Endpoint:           input.Endpoint,
+			InsecureSkipVerify: input.InsecureSkipVerify,
+			RetryMaxAttempts:   input.RetryMaxAttempts,
+			UsePathStyle:       input.UsePathStyle,
+			// AWS Credentials
+			AccessKeyID:     input.AccessKeyID,
+			SecretAccessKey: input.SecretAccessKey,
+			SessionToken:    input.SessionToken,
+			// Client Mode
+			LogClientSigning:   input.LogClientSigning,
+			LogClientRetries:   input.LogClientRetries,
+			LogClientRequests:  input.LogClientRequests,
+			LogClientResponses: input.LogClientResponses,
+		})
 
 		//
 
@@ -379,17 +505,17 @@ func initFileSystem(ctx context.Context, v *viper.Viper, root string, profile st
 		// List Buckets
 		//
 
-		listBucketsOutput, err := clients[defaultRegion].ListBuckets(ctx, &s3.ListBucketsInput{})
+		listBucketsOutput, err := clients[input.DefaultRegion].ListBuckets(ctx, &s3.ListBucketsInput{})
 		if err == nil {
 			// if root is s3:// and don't know enough to filter by source or destination
-			if root == "s3://" && sourceBucket == "" && destinationBucket == "" {
+			if input.Root == "s3://" && input.SourceBucket == "" && input.DestinationBucket == "" {
 				// do not filter
 				for _, b := range listBucketsOutput.Buckets {
 					bucketCreationDates[aws.ToString(b.Name)] = aws.ToTime(b.CreationDate)
 				}
 			} else {
 				for _, b := range listBucketsOutput.Buckets {
-					if bucketName := aws.ToString(b.Name); bucketName == sourceBucket || bucketName == destinationBucket {
+					if bucketName := aws.ToString(b.Name); bucketName == input.SourceBucket || bucketName == input.DestinationBucket {
 						bucketCreationDates[bucketName] = aws.ToTime(b.CreationDate)
 					}
 				}
@@ -400,12 +526,12 @@ func initFileSystem(ctx context.Context, v *viper.Viper, root string, profile st
 		// If root is the account
 		//
 
-		if root == "s3://" {
+		if input.Root == "s3://" {
 			//
 			// Get Region for each Bucket
 			//
 			for bucketName := range bucketCreationDates {
-				getBucketLocationOutput, getBucketLocationError := clients[defaultRegion].GetBucketLocation(ctx, &s3.GetBucketLocationInput{
+				getBucketLocationOutput, getBucketLocationError := clients[input.DefaultRegion].GetBucketLocation(ctx, &s3.GetBucketLocationInput{
 					Bucket: aws.String(bucketName),
 				})
 				if getBucketLocationError == nil {
@@ -423,32 +549,50 @@ func initFileSystem(ctx context.Context, v *viper.Viper, root string, profile st
 
 			for _, bucketRegion := range bucketRegions {
 				if _, ok := clients[bucketRegion]; !ok {
-					clients[bucketRegion] = initS3Client(ctx, v, profile, partition, bucketRegion)
+					clients[bucketRegion] = InitS3Client(ctx, &InitS3ClientInput{
+						Profile:   input.Profile,
+						Partition: input.Partition,
+						Region:    bucketRegion,
+						// AWS Client
+						Endpoint:           input.Endpoint,
+						InsecureSkipVerify: input.InsecureSkipVerify,
+						RetryMaxAttempts:   input.RetryMaxAttempts,
+						UsePathStyle:       input.UsePathStyle,
+						// AWS Credentials
+						AccessKeyID:     input.AccessKeyID,
+						SecretAccessKey: input.SecretAccessKey,
+						SessionToken:    input.SessionToken,
+						// Client Mode
+						LogClientSigning:   input.LogClientSigning,
+						LogClientRetries:   input.LogClientRetries,
+						LogClientRequests:  input.LogClientRequests,
+						LogClientResponses: input.LogClientResponses,
+					})
 				}
 			}
 
 			return s3fs.NewS3FileSystem(
-				defaultRegion,
+				input.DefaultRegion,
 				"",
 				"",
 				clients,
 				bucketRegions,
 				bucketCreationDates,
-				maxDirectoryEntries,
-				maxPages,
-				bucketKeyEnabled,
-				v.GetInt(flagPartSize))
+				input.MaxDirectoryEntries,
+				input.MaxPages,
+				input.BucketKeyEnabled,
+				input.PartSize)
 		}
 
 		//
 		// If root is a bucket
 		//
 
-		rootParts := strings.Split(root[len("s3://"):], "/")
+		rootParts := strings.Split(input.Root[len("s3://"):], "/")
 		bucketName := rootParts[0]
 		prefix := strings.Join(rootParts[1:], "/")
 
-		getBucketLocationOutput, err := clients[defaultRegion].GetBucketLocation(ctx, &s3.GetBucketLocationInput{
+		getBucketLocationOutput, err := clients[input.DefaultRegion].GetBucketLocation(ctx, &s3.GetBucketLocationInput{
 			Bucket: aws.String(bucketName),
 		})
 		if err == nil {
@@ -464,26 +608,62 @@ func initFileSystem(ctx context.Context, v *viper.Viper, root string, profile st
 		//
 
 		if bucketRegion, ok := bucketRegions[bucketName]; ok {
-			clients[bucketRegion] = initS3Client(ctx, v, profile, partition, bucketRegion)
+			clients[bucketRegion] = InitS3Client(ctx, &InitS3ClientInput{
+				Profile:   input.Profile,
+				Partition: input.Partition,
+				Region:    bucketRegion,
+				// AWS Client
+				Endpoint:           input.Endpoint,
+				InsecureSkipVerify: input.InsecureSkipVerify,
+				RetryMaxAttempts:   input.RetryMaxAttempts,
+				UsePathStyle:       input.UsePathStyle,
+				// AWS Credentials
+				AccessKeyID:     input.AccessKeyID,
+				SecretAccessKey: input.SecretAccessKey,
+				SessionToken:    input.SessionToken,
+				// Client Mode
+				LogClientSigning:   input.LogClientSigning,
+				LogClientRetries:   input.LogClientRetries,
+				LogClientRequests:  input.LogClientRequests,
+				LogClientResponses: input.LogClientResponses,
+			})
 		} else {
 			// It GetBucketLocation is not allowed, assume that the default region is the region containing the bucket
-			clients[defaultRegion] = initS3Client(ctx, v, profile, partition, defaultRegion)
+			clients[input.DefaultRegion] = InitS3Client(ctx, &InitS3ClientInput{
+				Profile:   input.Profile,
+				Partition: input.Partition,
+				Region:    input.DefaultRegion,
+				// AWS Client
+				Endpoint:           input.Endpoint,
+				InsecureSkipVerify: input.InsecureSkipVerify,
+				RetryMaxAttempts:   input.RetryMaxAttempts,
+				UsePathStyle:       input.UsePathStyle,
+				// AWS Credentials
+				AccessKeyID:     input.AccessKeyID,
+				SecretAccessKey: input.SecretAccessKey,
+				SessionToken:    input.SessionToken,
+				// Client Mode
+				LogClientSigning:   input.LogClientSigning,
+				LogClientRetries:   input.LogClientRetries,
+				LogClientRequests:  input.LogClientRequests,
+				LogClientResponses: input.LogClientResponses,
+			})
 		}
 
 		return s3fs.NewS3FileSystem(
-			defaultRegion,
+			input.DefaultRegion,
 			bucketName,
 			prefix,
 			clients,
 			bucketRegions,
 			bucketCreationDates,
-			maxDirectoryEntries,
-			maxPages,
-			bucketKeyEnabled,
-			v.GetInt(flagPartSize))
+			input.MaxDirectoryEntries,
+			input.MaxPages,
+			input.BucketKeyEnabled,
+			input.PartSize)
 	}
 
-	return lfs.NewLocalFileSystem(root)
+	return lfs.NewLocalFileSystem(input.Root)
 }
 
 func initLogger(path string, perm string) (*log.SimpleLogger, error) {
@@ -651,19 +831,36 @@ func main() {
 				_ = logger.Log("Creating filesystem", fields)
 			}
 
-			fs := initFileSystem(
-				ctx,
-				v,
-				uri,
-				profile,
-				partition,
-				region,
-				maxDirectoryEntries,
-				maxPages,
-				false,
-				bucket,
-				"",
-			)
+			fileSystem := InitFileSystem(ctx, &InitFileSystemInput{
+				Viper:               v,
+				Root:                uri,
+				Profile:             profile,
+				Partition:           partition,
+				DefaultRegion:       region,
+				MaxDirectoryEntries: maxDirectoryEntries,
+				MaxPages:            maxPages,
+				BucketKeyEnabled:    false, // not applicable
+				SourceBucket:        bucket,
+				DestinationBucket:   "", // not applicable
+				// AWS Client
+				Endpoint:           v.GetString(flagAWSS3Endpoint),
+				InsecureSkipVerify: v.GetBool(flagAWSInsecureSkipVerify),
+				UsePathStyle:       v.GetBool(flagAWSS3UsePathStyle),
+				RetryMaxAttempts:   v.GetInt(flagAWSRetryMaxAttempts),
+				PartSize:           -1, // not applicable
+				// AWS Credentials
+				AccessKeyID:     v.GetString(flagAWSAccessKeyID),
+				SecretAccessKey: v.GetString(flagAWSSecretAccessKey),
+				SessionToken:    v.GetString(flagAWSSessionToken),
+				// Client Mode
+				LogClientSigning:   v.GetBool(flagLogClientSigning),
+				LogClientRetries:   v.GetBool(flagLogClientRetries),
+				LogClientRequests:  v.GetBool(flagLogClientRequests),
+				LogClientResponses: v.GetBool(flagLogClientResponses),
+			})
+
+			// func initFileSystem(ctx context.Context, v *viper.Viper, root string, profile string, partition string, defaultRegion string,
+			// maxDirectoryEntries int, maxPages int, bucketKeyEnabled bool, sourceBucket string, destinationBucket string) fs.FileSystem {
 
 			//
 			// List
@@ -671,7 +868,7 @@ func main() {
 
 			recursive := v.GetBool(flagRecursive)
 
-			directoryEntries, err := fs.ReadDir(ctx, "/", recursive)
+			directoryEntries, err := fileSystem.ReadDir(ctx, "/", recursive)
 			if err != nil {
 				_ = logger.Log("Error listing", map[string]interface{}{
 					"uri": uri,
@@ -701,7 +898,7 @@ func main() {
 						names = append(names, de.Name())
 					}
 				}
-				mn, err := fs.MagicNumbers(ctx, names, -1)
+				mn, err := fileSystem.MagicNumbers(ctx, names, -1)
 				if err != nil {
 					return fmt.Errorf("error retrieving magic numbers: %w", err)
 				}
@@ -904,9 +1101,20 @@ func main() {
 			sourceURI := args[0]
 			destinationURI := args[1]
 
-			profile := v.GetString(flagAWSProfile)
-			if len(profile) == 0 {
-				profile = "default"
+			sourceProfile := v.GetString(flagSourceAWSProfile)
+			if len(sourceProfile) == 0 {
+				sourceProfile = v.GetString(flagAWSProfile)
+				if len(sourceProfile) == 0 {
+					sourceProfile = "default"
+				}
+			}
+
+			destinationProfile := v.GetString(flagDestinationAWSProfile)
+			if len(destinationProfile) == 0 {
+				destinationProfile = v.GetString(flagAWSProfile)
+				if len(destinationProfile) == 0 {
+					destinationProfile = "default"
+				}
 			}
 
 			partition := v.GetString(flagAWSPartition)
@@ -914,20 +1122,46 @@ func main() {
 				partition = "aws"
 			}
 
-			region := v.GetString(flagAWSRegion)
-			if len(region) == 0 {
-				if defaultRegion := v.GetString(flagAWSDefaultRegion); len(defaultRegion) > 0 {
-					region = defaultRegion
+			sourceRegion := v.GetString(flagSourceAWSRegion)
+			if len(sourceRegion) == 0 {
+				sourceRegion = v.GetString(flagAWSRegion)
+				if len(sourceRegion) == 0 {
+					sourceRegion = v.GetString(flagAWSDefaultRegion)
+					if len(sourceRegion) == 0 {
+						sharedConfig, loadSharedConfigProfileError := config.LoadSharedConfigProfile(ctx, sourceProfile)
+						if loadSharedConfigProfileError == nil {
+							sourceRegion = sharedConfig.Region
+						}
+					}
 				}
 			}
 
-			// if neither region nor default region is specified
-			if len(region) == 0 {
-				sharedConfig, loadSharedConfigProfileError := config.LoadSharedConfigProfile(ctx, profile)
-				if loadSharedConfigProfileError == nil {
-					region = sharedConfig.Region
+			destinationRegion := v.GetString(flagDestinationAWSRegion)
+			if len(destinationRegion) == 0 {
+				destinationRegion = v.GetString(flagAWSRegion)
+				if len(destinationRegion) == 0 {
+					destinationRegion = v.GetString(flagAWSDefaultRegion)
+					if len(destinationRegion) == 0 {
+						sharedConfig, loadSharedConfigProfileError := config.LoadSharedConfigProfile(ctx, destinationProfile)
+						if loadSharedConfigProfileError == nil {
+							destinationRegion = sharedConfig.Region
+						}
+					}
 				}
 			}
+
+			sourceEndpoint := v.GetString(flagSourceAWSS3Endpoint)
+			if len(sourceEndpoint) == 0 {
+				sourceEndpoint = v.GetString(flagAWSS3Endpoint)
+			}
+
+			destinationEndpoint := v.GetString(flagDestinationAWSS3Endpoint)
+			if len(destinationEndpoint) == 0 {
+				destinationEndpoint = v.GetString(flagAWSS3Endpoint)
+			}
+
+			sourceUsePathStyle := v.GetBool(flagSourceAWSS3UsePathStyle) || v.GetBool(flagAWSS3UsePathStyle)
+			destinationUsePathStyle := v.GetBool(flagDestinationAWSS3UsePathStyle) || v.GetBool(flagAWSS3UsePathStyle)
 
 			syncDelete := v.GetBool(flagDelete)
 			maxDirectoryEntries := v.GetInt(flagMaxDirectoryEntries)
@@ -942,28 +1176,82 @@ func main() {
 				syncExclude = strings.Split(syncExcludeString, ":")
 			}
 			syncParents := v.GetBool(flagParents)
-
 			bucketKeyEnabled := v.GetBool(flagBucketKeyEnabled)
-
 			checkTimestamps := v.GetBool(flagCheckTimestamps)
 			timestampPrecision := v.GetDuration(flagTimestampPrecision)
+			// AWS Credentials
+			//accessKeyID := v.GetString(flagAWSAccessKeyID)
+			//secretAccessKey := v.GetString(flagAWSSecretAccessKey)
+			//sessionToken := v.GetString(flagAWSSessionToken)
+			// Source Credentials
+			sourceAccessKeyID := v.GetString(flagSourceAWSAccessKeyID)
+			if len(sourceAccessKeyID) == 0 {
+				sourceAccessKeyID = v.GetString(flagAWSAccessKeyID)
+			}
+			sourceSecretAccessKey := v.GetString(flagSourceAWSSecretAccessKey)
+			if len(sourceSecretAccessKey) == 0 {
+				sourceSecretAccessKey = v.GetString(flagAWSSecretAccessKey)
+			}
+			sourceSessionToken := v.GetString(flagSourceAWSSessionToken)
+			if sourceSessionToken == "none" || sourceSessionToken == "nil" {
+				sourceSessionToken = ""
+			} else if len(sourceSessionToken) == 0 {
+				sourceSessionToken = v.GetString(flagAWSSessionToken)
+			}
+			// Destination Credentials
+			destinationAccessKeyID := v.GetString(flagDestinationAWSAccessKeyID)
+			if len(destinationAccessKeyID) == 0 {
+				destinationAccessKeyID = v.GetString(flagAWSAccessKeyID)
+			}
+			destinationSecretAccessKey := v.GetString(flagDestinationAWSSecretAccessKey)
+			if len(destinationSecretAccessKey) == 0 {
+				destinationSecretAccessKey = v.GetString(flagAWSSecretAccessKey)
+			}
+			destinationSessionToken := v.GetString(flagDestinationAWSSessionToken)
+			if destinationSessionToken == "none" || destinationSessionToken == "nil" {
+				destinationSessionToken = ""
+			} else if len(destinationSessionToken) == 0 {
+				destinationSessionToken = v.GetString(flagAWSSessionToken)
+			}
+			// Client Log
+			logClientSigning := v.GetBool(flagLogClientSigning)
+			logClientRetries := v.GetBool(flagLogClientRetries)
+			logClientRequests := v.GetBool(flagLogClientRequests)
+			logClientResponses := v.GetBool(flagLogClientResponses)
+
+			partSize := v.GetInt(flagPartSize)
 
 			_ = logger.Log("Configuration", map[string]interface{}{
-				"aws_retry_max_attempts": v.GetInt(flagAWSRetryMaxAttempts),
-				"bucket_key_enabled":     bucketKeyEnabled,
-				"check_timestamps":       checkTimestamps,
-				"max_directory_entries":  maxDirectoryEntries,
-				"max_pages":              maxPages,
-				"timestamp_precision":    timestampPrecision.String(),
-				"threads":                threads,
-				"exclude":                syncExclude,
-				"limit":                  syncLimit,
+				"aws_retry_max_attempts":     v.GetInt(flagAWSRetryMaxAttempts),
+				"bucket_key_enabled":         bucketKeyEnabled,
+				"check_timestamps":           checkTimestamps,
+				"max_directory_entries":      maxDirectoryEntries,
+				"max_pages":                  maxPages,
+				"timestamp_precision":        timestampPrecision.String(),
+				"threads":                    threads,
+				"exclude":                    syncExclude,
+				"limit":                      syncLimit,
+				"source_profile":             sourceProfile,
+				"source_region":              sourceRegion,
+				"source_use_path_style":      sourceUsePathStyle,
+				"destination_profile":        destinationProfile,
+				"destination_region":         destinationRegion,
+				"destination_use_path_style": destinationUsePathStyle,
+				"part_size":                  partSize,
 			})
 
 			//
 			// Synchronizing between s3 buckets
 			//
-			if strings.HasPrefix(sourceURI, "s3://") && strings.HasPrefix(destinationURI, "s3://") {
+			if strings.HasPrefix(sourceURI, "s3://") &&
+				strings.HasPrefix(destinationURI, "s3://") &&
+				sourceProfile == destinationProfile &&
+				sourceRegion == destinationRegion &&
+				sourceEndpoint == destinationEndpoint &&
+				sourceUsePathStyle == destinationUsePathStyle &&
+				sourceAccessKeyID == destinationAccessKeyID &&
+				sourceSecretAccessKey == destinationSecretAccessKey &&
+				sourceSessionToken == destinationSessionToken {
 				_ = logger.Log("Synchronizing between s3 buckets", map[string]interface{}{
 					"source":      sourceURI,
 					"destination": destinationURI,
@@ -990,25 +1278,40 @@ func main() {
 					fields := map[string]interface{}{
 						"root": root,
 					}
-					if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
-						fields["endpoint"] = e
+					if len(sourceEndpoint) > 0 {
+						fields["endpoint"] = sourceEndpoint
 					}
 					_ = logger.Log("Creating shared filesystem", fields)
 				}
 
-				fileSystem := initFileSystem(
-					ctx,
-					v,
-					root,
-					profile,
-					partition,
-					region,
-					maxDirectoryEntries,
-					maxPages,
-					bucketKeyEnabled,
-					sourceBucket,
-					destinationBucket,
-				)
+				fileSystem := InitFileSystem(ctx, &InitFileSystemInput{
+					Viper:               v,
+					Root:                root,
+					Profile:             sourceProfile,
+					Partition:           partition,
+					DefaultRegion:       sourceRegion,
+					MaxDirectoryEntries: maxDirectoryEntries,
+					MaxPages:            maxPages,
+					BucketKeyEnabled:    bucketKeyEnabled,
+					SourceBucket:        sourceBucket,
+					DestinationBucket:   destinationBucket,
+					// AWS Client
+					Endpoint:           sourceEndpoint,
+					InsecureSkipVerify: v.GetBool(flagAWSInsecureSkipVerify),
+					UsePathStyle:       sourceUsePathStyle,
+					RetryMaxAttempts:   v.GetInt(flagAWSRetryMaxAttempts),
+					PartSize:           partSize,
+					// AWS Credentials
+					AccessKeyID:     sourceAccessKeyID,
+					SecretAccessKey: sourceSecretAccessKey,
+					SessionToken:    sourceSessionToken,
+					// Client Mode
+					LogClientSigning:   logClientSigning,
+					LogClientRetries:   logClientRetries,
+					LogClientRequests:  logClientRequests,
+					LogClientResponses: logClientResponses,
+				})
+
 				sourceRelative := sourceURI[len(root):]
 				destinationRelative := destinationURI[len(root):]
 
@@ -1095,19 +1398,33 @@ func main() {
 					})
 				}
 
-				fileSystem := initFileSystem(
-					ctx,
-					v,
-					root,
-					profile,
-					partition,
-					region,
-					maxDirectoryEntries,
-					maxPages,
-					bucketKeyEnabled,
-					"",
-					"",
-				)
+				fileSystem := InitFileSystem(ctx, &InitFileSystemInput{
+					Viper:               v,
+					Root:                root,
+					Profile:             "",
+					Partition:           partition,
+					DefaultRegion:       "",
+					MaxDirectoryEntries: maxDirectoryEntries,
+					MaxPages:            maxPages,
+					BucketKeyEnabled:    false,
+					SourceBucket:        "",
+					DestinationBucket:   "",
+					// AWS Client
+					Endpoint:           "",
+					InsecureSkipVerify: v.GetBool(flagAWSInsecureSkipVerify),
+					UsePathStyle:       false,
+					RetryMaxAttempts:   v.GetInt(flagAWSRetryMaxAttempts),
+					PartSize:           -1,
+					// AWS Credentials
+					AccessKeyID:     "",
+					SecretAccessKey: "",
+					SessionToken:    "",
+					// Client Mode
+					LogClientSigning:   false,
+					LogClientRetries:   false,
+					LogClientRequests:  false,
+					LogClientResponses: false,
+				})
 
 				if debug {
 					_ = logger.Log("Created shared filesystem", map[string]interface{}{
@@ -1155,8 +1472,8 @@ func main() {
 				fields := map[string]interface{}{
 					"root": sourceURI,
 				}
-				if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
-					fields["endpoint"] = e
+				if len(sourceEndpoint) > 0 {
+					fields["endpoint"] = sourceEndpoint
 				}
 				_ = logger.Log("Creating source filesystem", fields)
 			}
@@ -1169,44 +1486,73 @@ func main() {
 			if destinationURI != "s3://" && strings.HasPrefix(destinationURI, "s3://") {
 				destinationBucket = s3fs.Split(destinationURI[len("s3://"):])[0]
 			}
-			sourceFileSystem := initFileSystem(
-				ctx,
-				v,
-				sourceURI,
-				profile,
-				partition,
-				region,
-				maxDirectoryEntries,
-				maxPages,
-				bucketKeyEnabled,
-				sourceBucket,
-				"",
-			)
+
+			sourceFileSystem := InitFileSystem(ctx, &InitFileSystemInput{
+				Viper:               v,
+				Root:                sourceURI,
+				Profile:             sourceProfile,
+				Partition:           partition,
+				DefaultRegion:       sourceRegion,
+				MaxDirectoryEntries: maxDirectoryEntries,
+				MaxPages:            maxPages,
+				BucketKeyEnabled:    false,
+				SourceBucket:        sourceBucket,
+				DestinationBucket:   "",
+				// AWS Client
+				Endpoint:           sourceEndpoint,
+				InsecureSkipVerify: v.GetBool(flagAWSInsecureSkipVerify),
+				UsePathStyle:       sourceUsePathStyle,
+				RetryMaxAttempts:   v.GetInt(flagAWSRetryMaxAttempts),
+				PartSize:           partSize,
+				// AWS Credentials
+				AccessKeyID:     sourceAccessKeyID,
+				SecretAccessKey: sourceSecretAccessKey,
+				SessionToken:    sourceSessionToken,
+				// Client Mode
+				LogClientSigning:   logClientSigning,
+				LogClientRetries:   logClientRetries,
+				LogClientRequests:  logClientRequests,
+				LogClientResponses: logClientResponses,
+			})
 
 			// create destination file system
 			if debug {
 				fields := map[string]interface{}{
 					"root": destinationURI,
 				}
-				if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
-					fields["endpoint"] = e
+				if len(destinationEndpoint) > 0 {
+					fields["endpoint"] = destinationEndpoint
 				}
 				_ = logger.Log("Creating destination filesystem", fields)
 			}
 
-			destinationFileSystem := initFileSystem(
-				ctx,
-				v,
-				destinationURI,
-				profile,
-				partition,
-				region,
-				maxDirectoryEntries,
-				maxPages,
-				bucketKeyEnabled,
-				"",
-				destinationBucket,
-			)
+			destinationFileSystem := InitFileSystem(ctx, &InitFileSystemInput{
+				Viper:               v,
+				Root:                destinationURI,
+				Profile:             destinationProfile,
+				Partition:           partition,
+				DefaultRegion:       destinationRegion,
+				MaxDirectoryEntries: maxDirectoryEntries,
+				MaxPages:            maxPages,
+				BucketKeyEnabled:    bucketKeyEnabled,
+				SourceBucket:        "",
+				DestinationBucket:   destinationBucket,
+				// AWS Client
+				Endpoint:           destinationEndpoint,
+				InsecureSkipVerify: v.GetBool(flagAWSInsecureSkipVerify),
+				UsePathStyle:       destinationUsePathStyle,
+				RetryMaxAttempts:   v.GetInt(flagAWSRetryMaxAttempts),
+				PartSize:           partSize,
+				// AWS Credentials
+				AccessKeyID:     destinationAccessKeyID,
+				SecretAccessKey: destinationSecretAccessKey,
+				SessionToken:    destinationSessionToken,
+				// Client Mode
+				LogClientSigning:   logClientSigning,
+				LogClientRetries:   logClientRetries,
+				LogClientRequests:  logClientRequests,
+				LogClientResponses: logClientResponses,
+			})
 
 			//
 			// Synchronize

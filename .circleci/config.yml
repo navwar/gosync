@@ -9,10 +9,15 @@ version: "2.1"
 
 executors:
 
-  # `arm` uses an ARM machine image.
-  arm:
+  # `ubuntu_amd64` uses an ubuntu amd64 machine image.
+  ubuntu_amd64:
     machine:
-      image: ubuntu-2004:202101-01
+      image: ubuntu-2204:2023.10.1
+
+  # `ubuntu_arm` uses an ubuntu ARM machine image.
+  ubuntu_arm:
+    machine:
+      image: ubuntu-2204:2023.10.1
     resource_class: arm.medium
 
   # `base` uses the `cimg/base` docker image.
@@ -20,15 +25,15 @@ executors:
     docker:
       - image: cimg/base:2023.02
 
-  # `main` uses the `cimg/go:1.20` docker image.
-  main:
+  # `go` uses the `cimg/go:1.21` docker image.
+  go:
     docker:
-      - image: cimg/go:1.20
+      - image: cimg/go:1.21
 
-  # `main_large` uses the `cimg/go:1.20` docker image with a large resource class.
-  main_large:
+  # `go_large` uses the `cimg/go:1.21` docker image with a large resource class.
+  go_large:
     docker:
-      - image: cimg/go:1.20
+      - image: cimg/go:1.21
     resource_class: large
 
   # `macos` uses the macOS machine image.
@@ -49,7 +54,7 @@ jobs:
 
   # `test_go` tests the source code.
   test_go:
-    executor: main
+    executor: go
     steps:
       - checkout
       - setup_remote_docker:
@@ -62,7 +67,10 @@ jobs:
 
   # `test_cli` tests the executable.
   test_cli:
-    executor: main
+    executor: go
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     steps:
       - checkout
       - setup_remote_docker:
@@ -70,11 +78,22 @@ jobs:
       - run: make tidy
       - run: make bin/gosync
       - run: make test_cli
-      - run: make sync_example
+      - run: make sync_testdata
+      - run: 'make bin/minio_linux_amd64 && mv bin/minio_linux_amd64 bin/minio'
+      - run:
+          name: "minio test"
+          command: >
+            export "PATH=$(pwd)/bin:$PATH" &&
+            make minio_serve_detached &&
+            sleep 3 &&
+            cat temp/minio/log &&
+            make minio_sync_testdata &&
+            make minio_sync_testdata &&
+            make minio_stop_detached
 
   # `build` builds the executables
   build:
-    executor: main_large
+    executor: go_large
     steps:
       - checkout
 
@@ -123,15 +142,13 @@ jobs:
 
   # `build_docker` builds the docker container.
   build_docker:
-    executor: main
+    executor: ubuntu_amd64
     steps:
       - checkout
-      - setup_remote_docker:
-          docker_layer_caching: false
       - run: make docker_build
       - run: make docker_version
       - run: make docker_help
-      - run: make docker_sync_example
+      - run: make docker_sync_testdata
 
   # `verify_linux` verifys the linux build
   verify_linux:
@@ -144,7 +161,7 @@ jobs:
 
   # `verify_linux_arm` verifys the linux/arm build
   verify_linux_arm:
-    executor: arm
+    executor: ubuntu_arm
     steps:
       - attach_workspace:
           at: bin

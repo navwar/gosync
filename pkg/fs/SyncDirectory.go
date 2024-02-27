@@ -93,6 +93,7 @@ func SyncDirectory(ctx context.Context, input *SyncDirectoryInput) (int, error) 
 		_ = input.Logger.Log("Synchronizing Directory", map[string]interface{}{
 			"delete":               input.Delete,
 			"dst":                  input.DestinationDirectory,
+			"exclude":              input.Exclude,
 			"files_at_destination": len(destinationDirectoryEntries),
 			"files_at_source":      len(sourceDirectoryEntries),
 			"src":                  input.SourceDirectory,
@@ -105,7 +106,7 @@ func SyncDirectory(ctx context.Context, input *SyncDirectoryInput) (int, error) 
 		if input.DestinationFileSystem.IsNotExist(statError) {
 			mkdirAllError := input.DestinationFileSystem.MkdirAll(ctx, input.DestinationDirectory, 0755)
 			if mkdirAllError != nil {
-				return 0, fmt.Errorf("error creating destination directory for %q", input.DestinationDirectory)
+				return 0, fmt.Errorf("error creating destination directory for %q: %w", input.DestinationDirectory, mkdirAllError)
 			}
 		} else {
 			return 0, fmt.Errorf("error stating destination directory %q: %w", input.DestinationDirectory, statError)

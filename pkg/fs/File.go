@@ -14,7 +14,8 @@ import (
 
 type File interface {
 	io.ReadSeekCloser
-	Writer
+	io.WriteCloser
+	io.WriterAt
 	Name() string
 	WriteTo(ctx context.Context, w Writer) (int64, error)
 }

@@ -5,16 +5,13 @@
 //
 // ==================================================================================
 
-package s3fs
+package fs
 
 import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"io"
 )
 
-func TestSplit(t *testing.T) {
-	assert.Equal(t, []string{"a", "b"}, Split("a/b"))
-	assert.Equal(t, []string{"a", "b"}, Split("a/b/"))
-	assert.Equal(t, []string{"/", "a", "b"}, Split("/a/b/"))
+type WriterAt interface {
+	Writer
+	io.WriterAt
 }

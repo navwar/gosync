@@ -13,5 +13,4 @@ import (
 
 type Writer interface {
 	io.WriteCloser
-	io.WriterAt
 }

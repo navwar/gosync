@@ -5,3 +5,11 @@
 #
 #   cp .envrc.local.template .envrc.local
 #
+
+export AWS_DEFAULT_REGION=
+
+export AWS_PROFILE=
+
+export MINIO_ACCESS_KEY_ID=
+
+export MINIO_SECRET_ACCESS_KEY=

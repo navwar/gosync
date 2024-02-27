@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# ==================================================================================
+#
+# Work of the U.S. Department of the Navy, Naval Information Warfare Center Pacific.
+# Released as open source under the MIT License.  See LICENSE file.
+#
+# ==================================================================================
+
+set -euo pipefail
+
+function usage() {
+  echo "Usage: ${0##*/} PID_FILE"
+  exit 1
+}
+
+if [[ "$#" -ne 1 ]]; then
+  usage
+fi
+
+pid_file=$1
+
+if [[ ! -f "${pid_file}" ]]; then
+  echo "PID file ${pid_file} does not exist."
+  exit 1
+fi
+
+pid_value=$(cat "${pid_file}")
+
+echo "Stopping process ${pid_value}"
+
+kill -9 "${pid_value}"
+
+echo "Removing pid file ${pid_file}"
+
+rm -f "${pid_file}"

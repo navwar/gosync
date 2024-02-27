@@ -172,7 +172,7 @@ func (lfs *LocalFileSystem) MustRelative(ctx context.Context, base string, targe
 	return relpath
 }
 
-func (lfs *LocalFileSystem) Open(ctx context.Context, name string) (fs.File, error) {
+func (lfs *LocalFileSystem) Open(ctx context.Context, name string) (fs.Object, error) {
 	f, err := lfs.fs.Open(name)
 	if err != nil {
 		return nil, err
@@ -181,6 +181,14 @@ func (lfs *LocalFileSystem) Open(ctx context.Context, name string) (fs.File, err
 }
 
 func (lfs *LocalFileSystem) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (fs.File, error) {
+	f, err := lfs.fs.OpenFile(name, flag, perm)
+	if err != nil {
+		return nil, err
+	}
+	return NewLocalFile(f), nil
+}
+
+func (lfs *LocalFileSystem) OpenObject(ctx context.Context, name string, flag int, perm os.FileMode) (fs.Object, error) {
 	f, err := lfs.fs.OpenFile(name, flag, perm)
 	if err != nil {
 		return nil, err
@@ -396,6 +404,7 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDir
 		_ = input.Logger.Log("Synchronizing Directory", map[string]interface{}{
 			"delete":  input.Delete,
 			"dst":     input.DestinationDirectory,
+			"exclude": input.Exclude,
 			"files":   len(sourceDirectoryEntries),
 			"src":     input.SourceDirectory,
 			"threads": input.MaxThreads,
@@ -407,7 +416,7 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDir
 		if lfs.IsNotExist(statError) {
 			mkdirAllError := lfs.MkdirAll(ctx, input.DestinationDirectory, 0755)
 			if mkdirAllError != nil {
-				return 0, fmt.Errorf("error creating destination directory for %q", input.DestinationDirectory)
+				return 0, fmt.Errorf("error creating destination directory for %q: %w", input.DestinationDirectory, mkdirAllError)
 			}
 		} else {
 			return 0, fmt.Errorf("error stating destination directory %q: %w", input.DestinationDirectory, statError)
@@ -469,6 +478,7 @@ func (lfs *LocalFileSystem) SyncDirectory(ctx context.Context, input *fs.SyncDir
 			c, err := lfs.SyncDirectory(ctx, &fs.SyncDirectoryInput{
 				CheckTimestamps:      input.CheckTimestamps,
 				DestinationDirectory: destinationName,
+				Exclude:              input.Exclude,
 				Limit:                directoryLimit,
 				Logger:               input.Logger,
 				MaxThreads:           input.MaxThreads,
