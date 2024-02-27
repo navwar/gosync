@@ -210,7 +210,7 @@ func initSyncFlags(flag *pflag.FlagSet) {
 	flag.Bool(flagSourceAWSS3UsePathStyle, false, "Use path-style addressing (default is to use virtual-host-style addressing) for source")
 	flag.String(flagSourceAWSAccessKeyID, "", "AWS Access Key ID for source")
 	flag.String(flagSourceAWSSecretAccessKey, "", "AWS Secret Access Key for source")
-	flag.String(flagSourceAWSSessionToken, "", "AWS Session Token for source")
+	flag.String(flagSourceAWSSessionToken, "", "AWS Session Token for source.  Set to none or nil to disable fallback to --aws-session-token.")
 	// AWS Destination Flags
 	flag.String(flagDestinationAWSProfile, "default", "AWS Profile for destination")
 	flag.String(flagDestinationAWSRegion, "", "AWS Region for destination")
@@ -218,7 +218,7 @@ func initSyncFlags(flag *pflag.FlagSet) {
 	flag.Bool(flagDestinationAWSS3UsePathStyle, false, "Use path-style addressing (default is to use virtual-host-style addressing) for destination")
 	flag.String(flagDestinationAWSAccessKeyID, "", "AWS Access Key ID for destination")
 	flag.String(flagDestinationAWSSecretAccessKey, "", "AWS Secret Access Key for destination")
-	flag.String(flagDestinationAWSSessionToken, "", "AWS Session Token for destination")
+	flag.String(flagDestinationAWSSessionToken, "", "AWS Session Token for destination.  Set to none or nil to disable fallback to --aws-session-token.")
 }
 
 func initLogFlags(flag *pflag.FlagSet) {
@@ -1193,7 +1193,9 @@ func main() {
 				sourceSecretAccessKey = v.GetString(flagAWSSecretAccessKey)
 			}
 			sourceSessionToken := v.GetString(flagSourceAWSSessionToken)
-			if len(sourceSessionToken) == 0 {
+			if sourceSessionToken == "none" || sourceSessionToken == "nil" {
+				sourceSessionToken = ""
+			} else if len(sourceSessionToken) == 0 {
 				sourceSessionToken = v.GetString(flagAWSSessionToken)
 			}
 			// Destination Credentials
@@ -1206,7 +1208,9 @@ func main() {
 				destinationSecretAccessKey = v.GetString(flagAWSSecretAccessKey)
 			}
 			destinationSessionToken := v.GetString(flagDestinationAWSSessionToken)
-			if len(destinationSessionToken) == 0 {
+			if destinationSessionToken == "none" || destinationSessionToken == "nil" {
+				destinationSessionToken = ""
+			} else if len(destinationSessionToken) == 0 {
 				destinationSessionToken = v.GetString(flagAWSSessionToken)
 			}
 			// Client Log

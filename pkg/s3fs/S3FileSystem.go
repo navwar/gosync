@@ -989,7 +989,6 @@ func (s3fs *S3FileSystem) OpenObject(ctx context.Context, name string, flag int,
 			0,
 			size,
 			func(offset int64, p []byte) (int, error) {
-				fmt.Println("client.GetObject:", bucket, key, offset)
 				getObjectOutput, err := client.GetObject(ctx, &s3.GetObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),
