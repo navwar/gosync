@@ -540,7 +540,6 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string, recursive bo
 		} else {
 			// no limit for number of directory entries
 			for _, commonPrefix := range listObjectsOutput.CommonPrefixes {
-				//fmt.Println("Common Prefix:", aws.ToString(commonPrefix.Prefix))
 				directoryPrefix := strings.TrimRight(aws.ToString(commonPrefix.Prefix), "/")
 				directoryName := ""
 				if len(s3fs.bucket) == 0 {
@@ -579,7 +578,6 @@ func (s3fs *S3FileSystem) ReadDir(ctx context.Context, name string, recursive bo
 				} else {
 					fileName = strings.TrimPrefix("/"+aws.ToString(object.Key), name+"/")
 				}
-				//fmt.Println("fileName:", fileName)
 				// fileName is a blank string then there is a directory marker in s3,
 				// and you returned itself, so you can safely skip this one.
 				if fileName != "" {
