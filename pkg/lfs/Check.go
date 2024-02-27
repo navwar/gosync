@@ -14,7 +14,7 @@ import (
 // Check returns an error if there is a cycle error.
 func Check(source string, destination string) error {
 	if source == destination {
-		return fmt.Errorf("source and destination must be different: %q", source)
+		return fmt.Errorf("source and destination must be different: %q", "file://"+source)
 	}
 	sourceDirectories := Split(source)
 	destinationDirectories := Split(destination)
