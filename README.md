@@ -44,7 +44,7 @@ Flags:
       --destination-aws-s3-endpoint string         AWS S3 Endpoint URL for destination
       --destination-aws-s3-use-path-style          Use path-style addressing (default is to use virtual-host-style addressing) for destination
       --destination-aws-secret-access-key string   AWS Secret Access Key for destination
-      --destination-aws-session-token string       AWS Session Token for destination
+      --destination-aws-session-token string       AWS Session Token for destination.  Set to none or nil to disable fallback to --aws-session-token.
   -e, --exclude string                             a colon-separated list of paths to exclude with support for wildcards, e.g, path, *path, path*, or *path*.
   -h, --help                                       help for sync
       --human-readable-file-size                   display file sizes in human-readable format
@@ -68,7 +68,7 @@ Flags:
       --source-aws-s3-endpoint string              AWS S3 Endpoint URL for source
       --source-aws-s3-use-path-style               Use path-style addressing (default is to use virtual-host-style addressing) for source
       --source-aws-secret-access-key string        AWS Secret Access Key for source
-      --source-aws-session-token string            AWS Session Token for source
+      --source-aws-session-token string            AWS Session Token for source.  Set to none or nil to disable fallback to --aws-session-token.
       --threads int                                maximum number of parallel threads (default 1)
   -t, --time-layout string                         the layout to use for file timestamps.  Use go layout format, or the name of a layout.  Use gosync layouts to show all named layouts. (default "Default")
   -z, --time-zone string                           the timezone to use for file timestamps (default "Local")
